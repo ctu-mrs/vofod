@@ -2,7 +2,6 @@
 #define VOXEL_GRID_COUNTED_H
 
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/impl/voxel_grid.hpp>
 #include "vofod/point_types.h"
 
 namespace vofod

@@ -34,18 +34,6 @@
 
 #include <mrs_msgs/PoseWithCovarianceArrayStamped.h>
 
-#include <vofod/Detection.h>
-#include <vofod/Detections.h>
-#include <mrs_lib/param_loader.h>
-#include <mrs_lib/dynamic_reconfigure_mgr.h>
-#include <mrs_lib/subscribe_handler.h>
-#include <mrs_lib/transformer.h>
-#include <mrs_lib/geometry/misc.h>
-#include <mrs_lib/vector_converter.h>
-#include <mrs_lib/utils.h>
-
-#include "vofod/types.h"
-
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -90,22 +78,29 @@
 #include <sensor_msgs/RegionOfInterest.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
-#include <vofod/DetectionParamsConfig.h>
 
 #include <eigen_conversions/eigen_msg.h>
 #include <ouster_ros/GetMetadata.h>
+
+#include <mrs_lib/param_loader.h>
+#include <mrs_lib/dynamic_reconfigure_mgr.h>
+#include <mrs_lib/subscribe_handler.h>
+#include <mrs_lib/transformer.h>
+#include <mrs_lib/geometry/misc.h>
+#include <mrs_lib/vector_converter.h>
+#include <mrs_lib/utils.h>
 
 #include <mrs_lib/scope_timer.h>
 #include <mrs_msgs/PoseWithCovarianceArrayStamped.h>
 #include <vofod/Detections.h>
 #include <vofod/Status.h>
+#include <vofod/DetectionParamsConfig.h>
 
-#include "ros/duration.h"
-#include "ros/wall_timer.h"
 #include "vofod/voxel_map.h"
 #include "vofod/voxel_grid_weighted.h"
 #include "vofod/pc_loader.h"
 #include "vofod/point_types.h"
+#include "vofod/types.h"
 
 using namespace cv;
 using namespace std;

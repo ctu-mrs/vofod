@@ -1,15 +1,11 @@
 #ifndef VOXEL_MAP_H
 #define VOXEL_MAP_H
 
+#include <pcl/common/common.h>
 #include <functional>
 #include <vector>
 #include <unordered_set>
-#include <pcl/common/common.h>
 #include <visualization_msgs/Marker.h>
-#include <boost/make_shared.hpp>
-#include <boost/geometry/geometries/geometries.hpp> 
-
-#include <boost/geometry.hpp> 
 
 namespace vofod
 {

@@ -1,8 +1,7 @@
-#include "vofod/pc_loader.h"
-
-#include <sstream>
 #include <algorithm>
 #include <iterator>
+
+#include "vofod/pc_loader.h"
 
 /* // modified from http://www.martinbroadhurst.com/how-to-split-a-string-in-c.html */
 /* std::vector<std::string> split(const std::string& str, char delim = ' ') */
