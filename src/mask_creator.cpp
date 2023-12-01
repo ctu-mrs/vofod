@@ -1,105 +1,24 @@
 /* includes etc. //{ */
 
-#include <ros/package.h>
-#include <ros/ros.h>
-#include <sensor_msgs/image_encodings.h>
-#include <sensor_msgs/Range.h>
-#include <dynamic_reconfigure/server.h>
-
-#include <std_srvs/Trigger.h>
-#include <std_msgs/Float64.h>
-#include <mrs_msgs/Sphere.h>
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
-#include <geometry_msgs/TransformStamped.h>
-#include <std_msgs/Float64.h>
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Transform.h>
-#include <tf2/LinearMath/Vector3.h>
-#include <tf2_eigen/tf2_eigen.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <opencv2/highgui.hpp>
 #include <image_transport/image_transport.h>
-#include <image_geometry/pinhole_camera_model.h>
 #include <cv_bridge/cv_bridge.h>
 
-#include <opencv2/imgproc/imgproc.hpp>
-#include <opencv2/highgui/highgui.hpp>
-
-#include <boost/geometry.hpp>
-#include <boost/geometry/geometries/point_xy.hpp>
-#include <boost/geometry/geometries/geometries.hpp>
-
-#include <list>
-
-#include <mrs_msgs/PoseWithCovarianceArrayStamped.h>
+#include <std_srvs/Trigger.h>
 
 #include <cmath>
-#include <limits>
 #include <mutex>
 #include <thread>
-#include <algorithm>
 
 #include <nodelet/nodelet.h>
-#include <image_transport/image_transport.h>
 
-#include <pcl/ModelCoefficients.h>
-#include <pcl/common/common.h>
-#include <pcl/common/transforms.h>
-#include <pcl/conversions.h>
-#include <pcl/io/pcd_io.h>
 #include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-#include <pcl/kdtree/kdtree.h>
-#include <pcl/octree/octree_search.h>
-#include <pcl/registration/transforms.h>
-#include <pcl/segmentation/extract_clusters.h>
-#include <pcl/segmentation/conditional_euclidean_clustering.h>
 #include <pcl_ros/point_cloud.h>
-#include <pcl_ros/transforms.h>
-#include <pcl_conversions/pcl_conversions.h>
-
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/crop_box.h>
-#include <pcl/filters/extract_indices.h>
-
-#include <pcl/features/normal_3d_omp.h>
-#include <pcl/features/integral_image_normal.h>
-#include <pcl/features/moment_of_inertia_estimation.h>
-#include <pcl/surface/poisson.h>
-
-#include <pcl/sample_consensus/ransac.h>
-#include <pcl/sample_consensus/lmeds.h>
-#include <pcl/sample_consensus/sac_model_plane.h>
-#include <pcl/sample_consensus/sac_model_line.h>
-
-#include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/point_cloud2_iterator.h>
-#include <sensor_msgs/RegionOfInterest.h>
-#include <visualization_msgs/Marker.h>
-#include <visualization_msgs/MarkerArray.h>
-
-#include <eigen_conversions/eigen_msg.h>
 #include <ouster_ros/GetMetadata.h>
 
 #include <mrs_lib/param_loader.h>
-#include <mrs_lib/dynamic_reconfigure_mgr.h>
 #include <mrs_lib/subscribe_handler.h>
-#include <mrs_lib/transformer.h>
-#include <mrs_lib/geometry/misc.h>
-#include <mrs_lib/vector_converter.h>
-#include <mrs_lib/utils.h>
 
-#include <mrs_lib/scope_timer.h>
-#include <mrs_msgs/PoseWithCovarianceArrayStamped.h>
-#include <vofod/Detections.h>
-#include <vofod/Status.h>
-#include <vofod/DetectionParamsConfig.h>
-
-#include "vofod/voxel_map.h"
-#include "vofod/voxel_grid_weighted.h"
-#include "vofod/pc_loader.h"
-#include "vofod/point_types.h"
 #include "vofod/types.h"
 
 using namespace cv;

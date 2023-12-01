@@ -1,34 +1,12 @@
 /* includes etc. //{ */
 
-#include <ros/package.h>
-#include <ros/ros.h>
-#include <sensor_msgs/image_encodings.h>
 #include <sensor_msgs/Range.h>
-#include <dynamic_reconfigure/server.h>
 
 #include <std_srvs/Trigger.h>
-#include <std_msgs/Float64.h>
 #include <mrs_msgs/Sphere.h>
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <geometry_msgs/TransformStamped.h>
-#include <std_msgs/Float64.h>
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Transform.h>
-#include <tf2/LinearMath/Vector3.h>
 #include <tf2_eigen/tf2_eigen.h>
 #include <tf2_ros/transform_listener.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include <image_transport/image_transport.h>
-#include <image_geometry/pinhole_camera_model.h>
-#include <cv_bridge/cv_bridge.h>
-
-#include <opencv2/imgproc/imgproc.hpp>
-#include <opencv2/highgui/highgui.hpp>
-
-#include <boost/geometry.hpp>
-#include <boost/geometry/geometries/point_xy.hpp>
-#include <boost/geometry/geometries/geometries.hpp>
 
 #include <list>
 
@@ -39,9 +17,6 @@
 #include <mrs_lib/param_loader.h>
 #include <mrs_lib/dynamic_reconfigure_mgr.h>
 #include <mrs_lib/subscribe_handler.h>
-#include <mrs_lib/transformer.h>
-#include <mrs_lib/geometry/misc.h>
-#include <mrs_lib/vector_converter.h>
 #include <mrs_lib/utils.h>
 
 #include "vofod/types.h"
@@ -53,57 +28,37 @@
 
 #include <nodelet/nodelet.h>
 
-#include <pcl/ModelCoefficients.h>
-#include <pcl/common/common.h>
 #include <pcl/common/transforms.h>
 #include <pcl/conversions.h>
-#include <pcl/io/pcd_io.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/kdtree/kdtree.h>
-#include <pcl/octree/octree_search.h>
-#include <pcl/registration/transforms.h>
 #include <pcl/segmentation/extract_clusters.h>
-#include <pcl/segmentation/conditional_euclidean_clustering.h>
 #include <pcl_ros/point_cloud.h>
-#include <pcl_ros/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/crop_box.h>
 #include <pcl/filters/extract_indices.h>
 
-#include <pcl/features/normal_3d_omp.h>
-#include <pcl/features/integral_image_normal.h>
 #include <pcl/features/moment_of_inertia_estimation.h>
-#include <pcl/surface/poisson.h>
 
-#include <pcl/sample_consensus/ransac.h>
-#include <pcl/sample_consensus/lmeds.h>
-#include <pcl/sample_consensus/sac_model_plane.h>
-#include <pcl/sample_consensus/sac_model_line.h>
-
+#include <opencv2/imgcodecs.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/point_cloud2_iterator.h>
-#include <sensor_msgs/RegionOfInterest.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <vofod/DetectionParamsConfig.h>
 
-#include <eigen_conversions/eigen_msg.h>
 #include <ouster_ros/GetMetadata.h>
 
 #include <mrs_lib/scope_timer.h>
-#include <mrs_lib/geometry/conversions.h>
 
 #include <mrs_msgs/PoseWithCovarianceArrayStamped.h>
 #include <vofod/Detections.h>
 #include <vofod/Status.h>
 #include <vofod/ProfilingInfo.h>
 
-#include "ros/duration.h"
-#include "ros/wall_timer.h"
 #include "vofod/voxel_map.h"
 #include "vofod/voxel_grid_weighted.h"
 #include "vofod/voxel_grid_counted.h"
@@ -160,7 +115,7 @@ namespace vofod
     float obb_size = std::numeric_limits<float>::quiet_NaN();
     VoxelMap submap;
     pc_XYZR_t::ConstPtr pc;
-    PointIndices::ConstPtr pc_indices;
+    pcl::PointIndices::ConstPtr pc_indices;
   };
   
   struct detection_t
@@ -731,9 +686,9 @@ namespace vofod
 
     /* clusterCloud() method //{ */
     template<class T>
-    std::vector<PointIndices> clusterCloud(const typename boost::shared_ptr<T> cloud, const float max_distance)
+    std::vector<pcl::PointIndices> clusterCloud(const typename boost::shared_ptr<T> cloud, const float max_distance)
     {
-      std::vector<PointIndices> ret;
+      std::vector<pcl::PointIndices> ret;
       pcl::EuclideanClusterExtraction<typename T::PointType> ece;
       ece.setClusterTolerance(max_distance);
       ece.setInputCloud(cloud);
@@ -744,10 +699,10 @@ namespace vofod
 
     /* findCloseFarClusters() method //{ */
     // separates clusters to those which are closer and further than a threshold to a pointcloud
-    std::pair<std::vector<PointIndices::ConstPtr>, std::vector<PointIndices::ConstPtr>> findCloseFarClusters(const pc_XYZR_t::ConstPtr cloud, const std::vector<PointIndices>& clusters_indices)
+    std::pair<std::vector<pcl::PointIndices::ConstPtr>, std::vector<pcl::PointIndices::ConstPtr>> findCloseFarClusters(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices>& clusters_indices)
     {
-      std::vector<PointIndices::ConstPtr> close_clusters_indices;
-      std::vector<PointIndices::ConstPtr> far_clusters_indices;
+      std::vector<pcl::PointIndices::ConstPtr> close_clusters_indices;
+      std::vector<pcl::PointIndices::ConstPtr> far_clusters_indices;
       close_clusters_indices.reserve(clusters_indices.size());
       far_clusters_indices.reserve(clusters_indices.size());
       const auto max_dist = m_drmgr_ptr->config.ground_points_max_distance;
@@ -786,16 +741,16 @@ namespace vofod
         }
     
         if (is_close)
-          close_clusters_indices.push_back(boost::make_shared<PointIndices>(cluster_indices));
+          close_clusters_indices.push_back(boost::make_shared<pcl::PointIndices>(cluster_indices));
         else
-          far_clusters_indices.push_back(boost::make_shared<PointIndices>(cluster_indices));
+          far_clusters_indices.push_back(boost::make_shared<pcl::PointIndices>(cluster_indices));
       }
       return {close_clusters_indices, far_clusters_indices};
     }
     //}
 
     /* extractClustersPoints() method //{ */
-    pc_XYZR_t::Ptr extractClustersPoints(const pc_XYZR_t::ConstPtr cloud, const std::vector<PointIndices::ConstPtr>& clusters_indices)
+    pc_XYZR_t::Ptr extractClustersPoints(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices)
     {
       pc_XYZR_t::Ptr ret = boost::make_shared<pc_XYZR_t>();
       size_t pts = 0;
@@ -840,7 +795,7 @@ namespace vofod
       m_voxel_flags.atIdx(xc, yc, zc) = vflags;
     }
 
-    void updateVMaps(const pc_XYZR_t::ConstPtr cloud, const std::vector<PointIndices::ConstPtr>& clusters_indices, const float vmap_score, const float vflags)
+    void updateVMaps(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices, const float vmap_score, const float vflags)
     {
       for (const auto& cluster_indices : clusters_indices)
       {
@@ -860,7 +815,7 @@ namespace vofod
     //}
 
     /* classifyClusters() method //{ */
-    std::vector<cluster_t> classifyClusters(const pc_XYZR_t::ConstPtr cloud, const std::vector<PointIndices::ConstPtr>& clusters_indices, const Eigen::Affine3f& s2w_tf)
+    std::vector<cluster_t> classifyClusters(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices, const Eigen::Affine3f& s2w_tf)
     {
       std::vector<cluster_t> clusters;
       clusters.reserve(clusters_indices.size());
@@ -972,7 +927,7 @@ namespace vofod
       stimer.checkpoint("filtering");
 
       // separate the current cloud to clusters with max. point distance m_drmgr_ptr->config.ground_points_max_distance
-      const std::vector<PointIndices> clusters_indices = clusterCloud(cloud_weighted, m_drmgr_ptr->config.ground_points_max_distance);
+      const std::vector<pcl::PointIndices> clusters_indices = clusterCloud(cloud_weighted, m_drmgr_ptr->config.ground_points_max_distance);
       stimer.checkpoint("clusterization");
 
       // find clusters, which are close enough to background points to be considered background as well, and clusters, which are further
@@ -1210,7 +1165,7 @@ namespace vofod
       tim.checkpoint("downsample");
 
       // clusterize voxels (represented as points), classified as background
-      const std::vector<PointIndices> clusters_indices = clusterCloud(vmap_pc_ds, max_voxel_dist);
+      const std::vector<pcl::PointIndices> clusters_indices = clusterCloud(vmap_pc_ds, max_voxel_dist);
       tim.checkpoint("clustering");
 
       // find the number of sure voxels in each cluster
@@ -1676,7 +1631,7 @@ namespace vofod
     //}
 
     /* cluster_centroid() method //{ */
-    pt_XYZ_t cluster_centroid(const pc_XYZ_t& cloud, const PointIndices& cluster_indices)
+    pt_XYZ_t cluster_centroid(const pc_XYZ_t& cloud, const pcl::PointIndices& cluster_indices)
     {
       vec4_t centroid;
       pcl::compute3DCentroid(cloud, cluster_indices.indices, centroid);
@@ -1687,7 +1642,7 @@ namespace vofod
     //}
 
     /* classify_cluster() method //{ */
-    cluster_t classify_cluster(const pc_XYZR_t::ConstPtr& cloud, const PointIndices::ConstPtr& cluster_indices, const Eigen::Affine3f& s2w_tf)
+    cluster_t classify_cluster(const pc_XYZR_t::ConstPtr& cloud, const pcl::PointIndices::ConstPtr& cluster_indices, const Eigen::Affine3f& s2w_tf)
     {
       // TODO: deal with voxels at the edge of the map separately (should never be classified as detections)
       cluster_t ret;
