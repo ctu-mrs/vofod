@@ -1,0 +1,5 @@
+sensor:
+  # Ouster OS0-128 Gen2
+  vertical_fov_angle: !degrees 90.0
+  vertical_rays: 128
+  horizontal_rays: 1024

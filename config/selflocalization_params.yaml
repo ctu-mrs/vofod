@@ -1,0 +1,85 @@
+throttle_period: 1.0 # seconds
+# points of the input pointcloud, closer than this size, are averaged
+input_filter:
+  # voxel-based downsamplling
+  voxelgrid:
+    leaf_size: 0.5 # meters
+    min_points_per_voxel: 1
+  # ring skipping (also downsampling)
+  keep_every_nth_ring: 1
+  # ground removal filter (to reduce non-informative points)
+  ground_removal:
+    use: true
+    range/use: true
+    static_frame_id: "rtk_origin"
+    max_precrop_height: 2.0
+    ransac:
+      max_inlier_distance:  0.5
+      max_angle_difference: !degrees 15.0
+    plane_offset: 1.0
+    leaf_size: 2.5 # metres
+
+nckf:
+  use: true
+  Q:
+    position:
+      xy: 0.001   # 2.5 corresponds to drift of approx. 0.5m per 1/10th of a second (one scan)
+      z:  0.005  # 2.5 corresponds to drift of approx. 0.5m per 1/10th of a second (one scan)
+    orientation: 0.005 # 0.005 corresponds to drift of approx. 1.3 degrees per 1/10th of a second (one scan)
+  R:
+    position:
+      xy: 0.1
+      z:  0.05
+    orientation: 0.01
+  P_init:
+    position:
+      xy: 0.1
+      z:  50.0
+    orientation: 0.1
+
+icp:
+  init:
+    max_correspondence_distance: 10.0
+    maximum_iterations: 50
+    transformation_epsilon: 0.00000001
+    euclidean_fitness_epsilon: 0
+  update:
+    max_correspondence_distance: 1.5
+    maximum_iterations: 15
+    transformation_epsilon: 0.00000001
+    euclidean_fitness_epsilon: 0
+
+reset:
+  init:
+    max_distance: 15.0
+    max_angle: 30.0  # degrees
+  update:
+    max_distance: 2.0
+    max_angle: 5.0   # degrees
+  total:
+    max_distance: 20.0
+    max_angle: 35.0  # degrees
+  timeout: 4.0 # seconds
+
+# points inside the box, defined by *uav_exclude_box*, relative to the sensor, are discarded
+# this is used to filter out the MAV itself from the pointcloud
+exclude_box:
+  offset: # offset of the box center relative to the sensor origin
+    x: 0.09 # meters
+    y: 0.0 # meters
+    z: -0.5 # meters
+  size:
+    x: 2.0 # meters
+    y: 2.0 # meters
+    z: 1.0 # meters
+
+operation_area:
+  offset: # offset of the box center relative to the global origin
+    x: 10.0 # meters
+    y: 30.0 # meters
+    z: -2.0 # meters - this is the lowest value, not center
+  size:
+    x: 300.0 # meters
+    y: 300.0 # meters
+    z: 50.0 # meters
+

@@ -1,0 +1,22 @@
+apriori_map:
+  tf:
+    x: -457.0
+    y: -102.0
+    z: 3.0
+    yaw: 0
+  voxelgrid_leaf_size: 0.5 # only used for the self-localization
+  sim_correction:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  # translation: [-470.0, -39.0, 2.5] # meters
+
+operation_area:
+  offset: # offset of the box center relative to the global origin
+    x: 0.0 # meters
+    y: 30.0 # meters
+    z: -2.0 # meters - this is the lowest value, not center
+  size:
+    x: 100.0 # meters
+    y: 50.0 # meters
+    z: 20.0 # meters

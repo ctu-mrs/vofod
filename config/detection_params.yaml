@@ -1,0 +1,83 @@
+throttle_period: 1.0 # seconds
+transform_lookup_timeout: 1.0 # seconds
+separate_cluster_removal_period: 0.1 # seconds
+pointcloud_threads: 1
+
+ground_points_max_distance: 1.5 # metres
+# at least the number of voxels in the xy plane times this ratio of points have to be considered background
+# before classification may begin
+background_sufficient_points_ratio: 0.15
+
+output:
+  position_sigma: 0.1
+
+voxel_map:
+  # Each voxel holds a value x, which is updated using a new value y according
+  # to the formula x := (x + y)/2
+  voxel_size: 0.25 # metres
+  # Voxels are updated using these scores
+  scores:
+    # Each voxel is initialized to this value at the beginning
+    init: -500.0
+    # A voxel with a point in it, which is in a cluster classified as part of background,
+    # is updated using this value
+    point: 0.0
+    # A voxel with a point in it, which is in a cluster classified as unknown, is updated
+    # using this value
+    unknown: -740.0
+    # A voxel with a ray going through it is updated using this value (unless there is
+    # a background or unknown point in the voxel as well)
+    ray: -1000.0
+  # Voxels are classified according to these thresholds
+  thresholds:
+    # Voxels with a value higher than this are considered part of the static apriori map
+    apriori_map: 0.0
+    # Voxels with a value higher than this are considered to be *sure* (or confirmed)
+    # parts of the background when looking for disconnected background clusters
+    # which are to be suppressed
+    sure_obstacles: -0.1
+    # Voxels with a value higher than this (and lower than the value for apriori_map)
+    # are considered to be new obstacles (not apriori known)
+    new_obstacles: -300.0
+    # Voxels with a value higher than this (and lower than the value for new_obstacles)
+    # are considered to be frontiers. If all voxels around a voxel (including it) have
+    # a value lower than this, it is considered to be certainly floating. If all voxels
+    # corresponding to points in a cluster are floating, it is considered to be a detection.
+    frontiers: -750.0
+
+classification:
+  # cluster with less point than this number are ignored
+  min_points: 2
+  # clusters with bounding box diagonal size larger than this will never be classified as MAV
+  max_size: 3.0 # meters
+  # clusters further than this are ignored
+  max_distance: 25.0 # meters
+  # when looking for a connection of a cluster to the ground, a neighborhood of maximally this distance will be considered
+  max_explore_distance: 3.0 # meters
+
+raycast:
+  pause: false
+  new_update_rule: true
+  max_distance: 20.0 # meters
+  weight_coefficient: 0.003
+  min_intensity: 0
+  mask_rows: 128
+  mask_mangle: false
+
+sepclusters:
+  pause: false
+  # maximal distance from a cluster with enough certain background points for an uncertain cluster not to be removed
+  max_bg_distance: 0.8 # meters
+  min_sure_points: 24
+
+# points inside the box, defined by *uav_exclude_box*, relative to the sensor, are discarded
+# this is used to filter out the MAV itself from the pointcloud
+exclude_box:
+  offset: # offset of the box center relative to the sensor origin
+    x: 0.09 # meters
+    y: 0.0 # meters
+    z: -0.75 # meters
+  size:
+    x: 2.5 # meters
+    y: 2.5 # meters
+    z: 1.6 # meters
