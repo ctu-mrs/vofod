@@ -1,5 +1,4 @@
-#ifndef VOXEL_GRID_COUNTED_H
-#define VOXEL_GRID_COUNTED_H
+#pragma once
 
 #include <pcl/filters/voxel_grid.h>
 #include "vofod/point_types.h"
@@ -24,5 +23,3 @@ namespace vofod
     Eigen::Vector4f align_center_ = Eigen::Vector4f::Zero();
   };
 }
-
-#endif // VOXEL_GRID_COUNTED_H

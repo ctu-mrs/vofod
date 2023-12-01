@@ -1,5 +1,4 @@
-#ifndef VOXEL_MAP_H
-#define VOXEL_MAP_H
+#pragma once
 
 #include <pcl/common/common.h>
 #include <functional>
@@ -203,5 +202,3 @@ namespace hash_tuple
 }
 
 //}
-
-#endif // VOXEL_MAP_H

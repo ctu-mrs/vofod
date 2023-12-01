@@ -45,6 +45,7 @@
 #include <mrs_lib/utils.h>
 
 #include "vofod/types.h"
+#include "vofod/point_types.h"
 
 #include <cmath>
 #include <thread>
