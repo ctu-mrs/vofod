@@ -8,27 +8,30 @@ project(vofod VERSION 666)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   roscpp
-  std_msgs
-  nav_msgs
-  mrs_msgs
-  sensor_msgs
+  nodelet
   dynamic_reconfigure
   cv_bridge
   image_transport
   image_geometry
+  message_runtime
   message_generation
   tf2
   tf2_ros
-  tf2_msgs
-  tf2_sensor_msgs
   tf2_eigen
-  tf2_geometry_msgs
-  visualization_msgs
   ouster_ros
   mrs_lib
-  nodelet
-  pcl_ros
   pcl_conversions
+  pcl_ros
+  pcl_msgs
+  std_msgs
+  nav_msgs
+  mrs_msgs
+  sensor_msgs
+  mavros_msgs
+  tf2_msgs
+  tf2_sensor_msgs
+  tf2_geometry_msgs
+  visualization_msgs
 )
 
 set(CMAKE_CXX_STANDARD 17)
@@ -75,8 +78,24 @@ generate_dynamic_reconfigure_options(
   config/dynamic_reconfigure/DetectionParams.cfg
   )
 
-catkin_package(
-  CATKIN_DEPENDS message_runtime pcl_ros image_transport mrs_lib # roscpp rospy std_msgs
+catkin_package(CATKIN_DEPENDS
+  roscpp
+  nodelet
+  image_transport
+  message_runtime
+  dynamic_reconfigure
+  mrs_lib
+  ouster_ros
+  pcl_ros
+  pcl_msgs
+  std_msgs
+  nav_msgs
+  mrs_msgs
+  mavros_msgs
+  sensor_msgs
+  std_msgs
+  tf2_sensor_msgs
+  visualization_msgs
 )
 
 ###########
@@ -90,11 +109,6 @@ include_directories(include
   ${OpenCV_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
-)
-
-## Add link directories
-link_directories(
-  ${PCL_LIBRARY_DIRS}
 )
 
 add_library(PCLDetector src/pcl_detect_nodelet.cpp src/voxel_map.cpp src/voxel_grid_weighted.cpp src/voxel_grid_counted.cpp src/pcl_loader.cpp)
