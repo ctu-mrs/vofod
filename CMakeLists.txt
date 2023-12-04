@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 # to make CMake shut up about some fckin policies
 cmake_policy(SET CMP0048 NEW)
-project(vofod VERSION 666)
+project(vofod VERSION 1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -66,7 +66,6 @@ find_package(Eigen3 REQUIRED)
 
 add_message_files(DIRECTORY msgs FILES
   Detection.msg
-  DetectionStamped.msg
   Detections.msg
   Status.msg
   ProfilingInfo.msg
@@ -114,17 +113,17 @@ include_directories(include
   ${pcl_ros_INCLUDE_DIRS}
 )
 
-add_library(PCLDetector src/pcl_detect_nodelet.cpp src/voxel_map.cpp src/voxel_grid_weighted.cpp src/voxel_grid_counted.cpp src/pcl_loader.cpp)
-add_dependencies(PCLDetector
+add_library(VoFOD src/vofod_nodelet.cpp src/voxel_map.cpp src/voxel_grid_weighted.cpp src/voxel_grid_counted.cpp src/pc_loader.cpp)
+add_dependencies(VoFOD
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
 )
-target_link_libraries(PCLDetector
+target_link_libraries(VoFOD
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${pcl_ros_LIBRARIES}
 )
-target_include_directories(PCLDetector SYSTEM PRIVATE ${pcl_ros_INCLUDE_DIRS})
+target_include_directories(VoFOD SYSTEM PRIVATE ${pcl_ros_INCLUDE_DIRS})
 
 add_library(MaskCreator src/mask_creator.cpp)
 add_dependencies(MaskCreator

@@ -2,7 +2,7 @@
 <package format="2">
   <name>vofod</name>
   <version>1.0.0</version>
-  <description>Package for detection of UAVs from camera image</description>
+  <description>Volumetric Flying Object Detector (VoFOD) for onboard detection of UAVs using a LiDAR or other spatial sensors.</description>
 
   <author email="vrbamato@fel.cvut.cz">Matouš Vrba</author>
   <maintainer email="vrbamato@fel.cvut.cz">Matouš Vrba</maintainer>

@@ -28,12 +28,12 @@
 
   <arg name="mask_filename" default="" />
 
-  <arg name="rangefinder_topic" default="mavros/distance_sensor/garmin" />
+  <arg name="rangefinder_topic" default="garmin/range" />
 
   <!-- nodelet-related arguments -->
   <arg name="standalone" default="true" />
   <arg name="manager" default="detection_nodelet_manager" />
-  <arg name="det_nodelet" value="vofod/PCLDetector" />
+  <arg name="det_nodelet" value="vofod/VoFOD" />
   <arg unless="$(arg standalone)" name="nodelet_load" value="load $(arg det_nodelet) $(arg manager)"/>
   <arg     if="$(arg standalone)" name="nodelet_load" value="standalone $(arg det_nodelet)"/>
 

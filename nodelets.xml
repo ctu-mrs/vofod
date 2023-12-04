@@ -1,12 +1,6 @@
-<library path="lib/libPCLDetector">
-  <class name="vofod/PCLDetector" type="vofod::PCLDetector" base_class_type="nodelet::Nodelet">
+<library path="lib/libVoFOD">
+  <class name="vofod/VoFOD" type="vofod::VoFOD" base_class_type="nodelet::Nodelet">
     <description>Nodelet for detecting a flying object in a pointcloud</description>
-  </class>
-</library>
-
-<library path="lib/libPCLSelfLocalizator">
-  <class name="vofod/PCLSelfLocalizator" type="vofod::PCLSelfLocalizator" base_class_type="nodelet::Nodelet">
-    <description>Nodelet for self-localization in apriori known pointcloud map using a LiDAR sensor</description>
   </class>
 </library>
 

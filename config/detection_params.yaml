@@ -14,7 +14,7 @@ output:
 voxel_map:
   # Each voxel holds a value x, which is updated using a new value y according
   # to the formula x := (x + y)/2
-  voxel_size: 0.25 # metres
+  voxel_size: 0.5 # metres
   # Voxels are updated using these scores
   scores:
     # Each voxel is initialized to this value at the beginning

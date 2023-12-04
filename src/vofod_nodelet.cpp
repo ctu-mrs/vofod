@@ -137,17 +137,17 @@ namespace vofod
 
   //}
 
-  class PCLDetector : public nodelet::Nodelet
+  class VoFOD : public nodelet::Nodelet
   {
   public:
     /* onInit() method //{ */
     void onInit() override
     {
       ros::NodeHandle nh = nodelet::Nodelet::getMTPrivateNodeHandle();
-      ROS_INFO("[PCLDetector]: Waiting for valid time...");
+      ROS_INFO("[VoFOD]: Waiting for valid time...");
       ros::Time::waitForValid();
 
-      m_node_name = "PCLDetector";
+      m_node_name = "VoFOD";
 
       /* Load parameters from ROS //{*/
       NODELET_INFO("Loading default dynamic parameters:");
@@ -215,7 +215,7 @@ namespace vofod
         const vec3_t translation(pl.loadParam2<double>("apriori_map/tf/x"), pl.loadParam2<double>("apriori_map/tf/y"), pl.loadParam2<double>("apriori_map/tf/z"));
         const Eigen::Matrix3f rotation = anax_t(pl.loadParam2<double>("apriori_map/tf/yaw")/180.0*M_PI, vec3_t::UnitZ()).toRotationMatrix();
 
-        const vec3_t sim_correction(pl.loadParam2<double>("apriori_map/sim_correction/x"), pl.loadParam2<double>("apriori_map/sim_correction/y"), pl.loadParam2<double>("apriori_map/sim_correction/z"));
+        const vec3_t sim_correction(pl.loadParam2<double>("apriori_map/sim_correction/x", 0), pl.loadParam2<double>("apriori_map/sim_correction/y", 0), pl.loadParam2<double>("apriori_map/sim_correction/z", 0));
         m_oparea_offset_x += sim_correction.x();
         m_oparea_offset_y += sim_correction.y();
         m_oparea_offset_z += sim_correction.z();
@@ -273,7 +273,7 @@ namespace vofod
 
       m_pub_profiling_info = nh.advertise<vofod::ProfilingInfo>("profiling_info", 1, true);
 
-      m_reset_server = nh.advertiseService("reset", &PCLDetector::reset_callback, this);
+      m_reset_server = nh.advertiseService("reset", &VoFOD::reset_callback, this);
       //}
 
       reset();
@@ -282,19 +282,19 @@ namespace vofod
       m_sure_background_sufficient = false;
       m_background_pts_sufficient = false;
       m_apriori_map_initialized = false;
-      std::thread apriori_load_thread(&PCLDetector::initialize_apriori_map, this, static_cloud_filename, apriori_map_tf);
+      std::thread apriori_load_thread(&VoFOD::initialize_apriori_map, this, static_cloud_filename, apriori_map_tf);
       apriori_load_thread.detach();
 
       // initialize the sensor information
       m_sensor_initialized = false;
       m_sensor_params_checked = false;
       m_sensor_params_ok = false;
-      std::thread sensor_load_thread(&PCLDetector::initialize_sensor, this);
+      std::thread sensor_load_thread(&VoFOD::initialize_sensor, this);
       sensor_load_thread.detach();
 
       m_last_detection_id = 0;
 
-      m_main_thread = std::thread(&PCLDetector::main_loop, this);
+      m_main_thread = std::thread(&VoFOD::main_loop, this);
       m_main_thread.detach();
 
       std::cout << "----------------------------------------------------------" << std::endl;
@@ -362,11 +362,11 @@ namespace vofod
       ouster::XYZLut xyz_lut;
       xyz_lut = ouster::make_xyz_lut(w, h, range_unit, lidar_origin_to_beam_origin_mm, tf, azimuth_angles_deg, altitude_angles_deg);
       if (xyz_lut.direction.cols() != xyz_lut.offset.cols())
-        NODELET_ERROR_STREAM("[PCLDetector]: XYZ LUT doesn't have the correct number of elements (number of direction vectors " << xyz_lut.direction.cols() << " is not equal to the number of offset vectors " << xyz_lut.offset.cols() << ")!");
+        NODELET_ERROR_STREAM("[VoFOD]: XYZ LUT doesn't have the correct number of elements (number of direction vectors " << xyz_lut.direction.cols() << " is not equal to the number of offset vectors " << xyz_lut.offset.cols() << ")!");
       
       m_sensor_xyz_lut = {xyz_lut.direction.cast<float>().transpose(), xyz_lut.offset.cast<float>().transpose()};
       m_sensor_xyz_lut.directions.colwise().normalize();
-      NODELET_INFO_STREAM("[PCLDetector]: Initialized XYZ LUT table with " << m_sensor_xyz_lut.directions.cols() << " elements.");
+      NODELET_INFO_STREAM("[VoFOD]: Initialized XYZ LUT table with " << m_sensor_xyz_lut.directions.cols() << " elements.");
     }
 
     // copied directly from the simulation plugin
@@ -448,13 +448,13 @@ namespace vofod
       auto client = nh.serviceClient<ouster_ros::GetMetadata>("get_metadata");
       std::vector<int> pixel_shift_by_row;
 
-      NODELET_INFO_STREAM("[PCLDetector]: Waiting 15s for service \"" << client.getService() << "\" to become available.");
-      if (m_sensor_simulation || !client.waitForExistence(ros::Duration(45.0)))
+      NODELET_INFO_STREAM("[VoFOD]: Waiting 30s for service \"" << client.getService() << "\" to become available.");
+      if (m_sensor_simulation || !client.waitForExistence(ros::Duration(30.0)))
       {
         if (m_sensor_simulation)
-          NODELET_ERROR("[PCLDetector]: Using a simulated sensor! Loading data from rosparam server.");
+          NODELET_ERROR("[VoFOD]: Using a simulated sensor! Loading data from rosparam server.");
         else
-          NODELET_ERROR("[PCLDetector]: OS config service is not ready in 10s! Loading data from rosparam server (DATA WILL BE UNCALIBRATED!!).");
+          NODELET_ERROR("[VoFOD]: OS config service is not ready in 10s! Loading data from rosparam server (DATA WILL BE UNCALIBRATED!!).");
         initialize_sensor_rosparam();
         pixel_shift_by_row.resize(m_sensor_hrays, 0);
       }
@@ -463,7 +463,7 @@ namespace vofod
         ouster_ros::GetMetadata cfg;
         if (!client.call(cfg))
         {
-          NODELET_ERROR("[PCLDetector]: Calling OS config service failed! Loading data from rosparam server (DATA WILL BE UNCALIBRATED!!).");
+          NODELET_ERROR("[VoFOD]: Calling OS config service failed! Loading data from rosparam server (DATA WILL BE UNCALIBRATED!!).");
           initialize_sensor_rosparam();
           pixel_shift_by_row.resize(m_sensor_hrays, 0);
         }
@@ -474,7 +474,7 @@ namespace vofod
           const auto W = info.format.columns_per_frame;
           pixel_shift_by_row = info.format.pixel_shift_by_row;
 
-          NODELET_INFO("[PCLDetector]: Calling OS config service succeeded! Initializing sensor parameters from the received response.");
+          NODELET_INFO("[VoFOD]: Calling OS config service succeeded! Initializing sensor parameters from the received response.");
           m_sensor_vrays = H;
           m_sensor_hrays = W;
       
@@ -491,7 +491,7 @@ namespace vofod
       
       // Load the mask and print some info to the console
       m_sensor_mask = load_mask(m_sensor_mask_fname, m_sensor_hrays, m_sensor_vrays, pixel_shift_by_row);
-      NODELET_INFO_STREAM("[PCLDetector]: Initialized using sensor parameters:" << std::endl
+      NODELET_INFO_STREAM("[VoFOD]: Initialized using sensor parameters:" << std::endl
           << "\tvertical rays: " << m_sensor_vrays
           << "\tvertical FOV: " << m_sensor_vfov
           << "\thorizontal rays: " << m_sensor_hrays
@@ -511,21 +511,21 @@ namespace vofod
       {
         if (mask.cols == (int)exp_cols && mask.rows == (int)exp_rows)
         {
-          NODELET_INFO("[PCLDetector]: Loaded image mask file \"%s\" with dimensions %dx%d.", fname.c_str(), mask.cols, mask.rows);
+          NODELET_INFO("[VoFOD]: Loaded image mask file \"%s\" with dimensions %dx%d.", fname.c_str(), mask.cols, mask.rows);
           /* mask.rowRange(0, mask.rows - m_sensor_mask_rows) = 255; */
           /* mask = mask.t(); */
           ret.resize(mask.cols*mask.rows);
 
           if (!m_sensor_mask_mangle)
           {
-            NODELET_WARN("[PCLDetector]: Not mangling mask.");
+            NODELET_WARN("[VoFOD]: Not mangling mask.");
             mask_img = mask;
             for (int it = 0; it < mask.cols*mask.rows; it++)
               ret.at(it) = mask.at<uint8_t>(it);
           }
           else
           {
-            NODELET_WARN("[PCLDetector]: Mangling mask!");
+            NODELET_WARN("[VoFOD]: Mangling mask!");
             mask_img = cv::Mat(mask.size(), CV_8UC1, 127);
             const auto H = m_sensor_vrays;
             const auto W = m_sensor_hrays;
@@ -547,12 +547,12 @@ namespace vofod
         }
         else
         {
-          NODELET_ERROR("[PCLDetector]: Image mask in file \"%s\" has wrong dimensions (%dx%d, expected %lux%lu)! Ignoring mask.", fname.c_str(), mask.cols, mask.rows, exp_cols, exp_rows);
+          NODELET_ERROR("[VoFOD]: Image mask in file \"%s\" has wrong dimensions (%dx%d, expected %lux%lu)! Ignoring mask.", fname.c_str(), mask.cols, mask.rows, exp_cols, exp_rows);
         }
       }
       else
       {
-        NODELET_WARN_STREAM("[PCLDetector]: Image mask file \"" << fname << "\" not found, ignoring mask.");
+        NODELET_WARN_STREAM("[VoFOD]: Image mask file \"" << fname << "\" not found, ignoring mask.");
       }
       ret.resize(exp_cols*exp_rows, 1); // fill the rest of the mask with ones, if required
       return ret;
@@ -590,7 +590,7 @@ namespace vofod
       bool tf_ok = get_transform_to_world(msg->header.frame_id, msg->header.stamp, s2w_tf);
       if (!tf_ok)
       {
-        NODELET_ERROR_THROTTLE(1.0, "[PCLDetector]: Could not transform point to global, skipping.");
+        NODELET_ERROR_THROTTLE(1.0, "[VoFOD]: Could not transform point to global, skipping.");
         return;
       }
       const vec3_t pt_tfd = s2w_tf.cast<float>() * vec3_t(msg->range, 0.0, 0.0);
@@ -599,7 +599,7 @@ namespace vofod
 
       if (!m_voxel_map.inLimits(pt_tfd.x(), pt_tfd.y(), pt_tfd.z()))
       {
-        NODELET_ERROR_THROTTLE(0.5, "[PCLDetector]: Range measurement is outside of the operational area! Cannot update ground map.");
+        NODELET_ERROR_THROTTLE(0.5, "[VoFOD]: Range measurement is outside of the operational area! Cannot update ground map.");
         return;
       }
 
@@ -607,7 +607,7 @@ namespace vofod
         std::scoped_lock lck(m_voxels_mtx);
         auto& mapval = m_voxel_map.at(pt_tfd.x(), pt_tfd.y(), pt_tfd.z());
         mapval = (mapval + m_drmgr_ptr->config.voxel_map__scores__point) / 2.0;
-        NODELET_INFO_THROTTLE(0.5, "[PCLDetector]: Range measurement is outside of the operational area! Cannot update ground map.");
+        NODELET_INFO_THROTTLE(0.5, "[VoFOD]: Range measurement is outside of the operational area! Cannot update ground map.");
       }
     }
 
@@ -634,7 +634,7 @@ namespace vofod
         cb.filter(*cloud_filtered);
       }
       //}
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[PCLDetector]: Input PC after CropBox 1: " << cloud_filtered->size() << " points");
+      NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Input PC after CropBox 1: " << cloud_filtered->size() << " points");
     
       pcl::transformPointCloud(*cloud_filtered, *cloud_filtered, s2w_tf);
       cloud_filtered->header.frame_id = m_world_frame_id;
@@ -653,7 +653,7 @@ namespace vofod
         cb.filter(*cloud_filtered);
       }
       //}
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[PCLDetector]: Input PC after CropBox 2: " << cloud_filtered->size() << " points");
+      NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Input PC after CropBox 2: " << cloud_filtered->size() << " points");
     
       pcl::PointCloud<pt_XYZR_t>::Ptr cloud_weighted = boost::make_shared<pcl::PointCloud<pt_XYZR_t>>();
       {
@@ -678,7 +678,7 @@ namespace vofod
         m_pub_weighted_input_pc.publish(cloud_weighted);
       }
 
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[PCLDetector]: Filtered input PC has " << cloud_weighted->size() << "/" << cloud->size() << " valid unique points (\033[1;31m" << 100.0f*float(cloud_weighted->size())/cloud->size() << "%\033[0m)");
+      NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Filtered input PC has " << cloud_weighted->size() << "/" << cloud->size() << " valid unique points (\033[1;31m" << 100.0f*float(cloud_weighted->size())/cloud->size() << "%\033[0m)");
       return cloud_weighted;
     }
     
@@ -715,12 +715,12 @@ namespace vofod
       if (n_bg_pts > m_background_min_sufficient_pts)
       {
         if (!m_background_pts_sufficient)
-          NODELET_INFO_THROTTLE(1.0, "[PCLDetector]: Sufficient number of ground points achieved (%lu)!", n_bg_pts);
+          NODELET_INFO_THROTTLE(1.0, "[VoFOD]: Sufficient number of ground points achieved (%lu)!", n_bg_pts);
         m_background_pts_sufficient = true;
       }
       else
       {
-        NODELET_WARN_THROTTLE(1.0, "[PCLDetector]: Insufficient number of ground points (%lu, require at least %lu)! Cluster classification is inactive.", n_bg_pts, m_background_min_sufficient_pts);
+        NODELET_WARN_THROTTLE(1.0, "[VoFOD]: Insufficient number of ground points (%lu, require at least %lu)! Cluster classification is inactive.", n_bg_pts, m_background_min_sufficient_pts);
       }
 
       for (const auto& cluster_indices : clusters_indices)
@@ -782,14 +782,14 @@ namespace vofod
       /*                                m_oparea_offset_z + m_oparea_size_z / 2); */
       /*   const Eigen::Vector3f min_pt(m_oparea_offset_x - m_oparea_size_x / 2, m_oparea_offset_y - m_oparea_size_y / 2, */
       /*                                m_oparea_offset_z - m_oparea_size_z / 2); */
-      /*   ROS_ERROR("[PCLDetector]: POINT NOT WITHIN LIMITS! [%.2f, %.2f, %.2f] (indices: [%d, %d, %d]), oparea from [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f]", pt.x, pt.y, pt.z, xc, yc, zc, min_pt.x(), min_pt.y(), min_pt.z(), max_pt.x(), max_pt.y(), max_pt.z()); */
+      /*   ROS_ERROR("[VoFOD]: POINT NOT WITHIN LIMITS! [%.2f, %.2f, %.2f] (indices: [%d, %d, %d]), oparea from [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f]", pt.x, pt.y, pt.z, xc, yc, zc, min_pt.x(), min_pt.y(), min_pt.z(), max_pt.x(), max_pt.y(), max_pt.z()); */
       /* } */
 
       auto& mapval = m_voxel_map.atIdx(xc, yc, zc);
       // pt.range is the weight of the point (how many times it should be applied)
       const float w = 1.0f/static_cast<float>(1lu << std::clamp(pt.range, 0u, 63u));
       /* if (w < 0.0f || (1.0f-w) < 0.0f) */
-      /*   ROS_ERROR("[PCLDetector]: Invalid weight: w1 = %.2f, w2 = %.2f!", w, (1.0f-w)); */
+      /*   ROS_ERROR("[VoFOD]: Invalid weight: w1 = %.2f, w2 = %.2f!", w, (1.0f-w)); */
       mapval = w*mapval + (1.0f-w)*vmap_score;
       // set the flag, indicating that this voxel was updated during this turn
       m_voxel_flags.atIdx(xc, yc, zc) = vflags;
@@ -886,17 +886,17 @@ namespace vofod
 
       if (m_sensor_xyz_lut.directions.cols() != m_sensor_xyz_lut.directions.cols())
       {
-        NODELET_ERROR("[PCLDetector]: Invalid XYZ LUT! Number of direction vectors (%ld) does not equal the number of offsets (%ld)! Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_xyz_lut.offsets.cols());
+        NODELET_ERROR("[VoFOD]: Invalid XYZ LUT! Number of direction vectors (%ld) does not equal the number of offsets (%ld)! Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_xyz_lut.offsets.cols());
         return;
       }
 
       if (cloud->size() != (size_t)m_sensor_xyz_lut.directions.cols())
       {
-        NODELET_ERROR("[PCLDetector]: Unexpected size of pointcloud! Expected: %ld (%d vert. x %d hor.), got: %lu. Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_vrays, m_sensor_hrays, cloud->size());
+        NODELET_ERROR("[VoFOD]: Unexpected size of pointcloud! Expected: %ld (%d vert. x %d hor.), got: %lu. Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_vrays, m_sensor_hrays, cloud->size());
         return;
       }
 
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[PCLDetector]: Processing new pointcloud in thead #" << thread_n);
+      NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Processing new pointcloud in thead #" << thread_n);
 
       if (!m_sensor_params_checked || !m_sensor_params_ok)
         check_sensor_params(cloud);
@@ -914,7 +914,7 @@ namespace vofod
         bool tf_ok = get_transform_to_world(cloud_frame_id, msg_stamp, s2w_tfd);
         if (!tf_ok)
         {
-          NODELET_ERROR_THROTTLE(1.0, "[PCLDetector]: Could not transform cloud to global, skipping.");
+          NODELET_ERROR_THROTTLE(1.0, "[VoFOD]: Could not transform cloud to global, skipping.");
           return;
         }
         s2w_tf = s2w_tfd.cast<float>();
@@ -950,7 +950,7 @@ namespace vofod
       if (!m_raycast_running)
       {
         m_raycast_running = true;
-        m_raycast_thread = std::thread(&PCLDetector::raycast_cloud, this, cloud, s2w_tf);
+        m_raycast_thread = std::thread(&VoFOD::raycast_cloud, this, cloud, s2w_tf);
         m_raycast_thread.detach();
       }
       stimer.checkpoint("vmap update");
@@ -981,7 +981,7 @@ namespace vofod
               tmp.covariance.at(3*r + c) = det.covariance(r, c);
           msg.detections.push_back(tmp);
         }
-        NODELET_INFO_THROTTLE(1.0, "[PCLDetector]: Publishing %lu detections", detections.size());
+        NODELET_INFO_THROTTLE(1.0, "[VoFOD]: Publishing %lu detections", detections.size());
         m_pub_detections.publish(msg);
       }
 
@@ -1303,13 +1303,13 @@ namespace vofod
       
         if (!m_apriori_map_initialized)
         {
-          NODELET_INFO_ONCE("[PCLDetector]: Waiting for intialization of the apriori static map...");
+          NODELET_INFO_ONCE("[VoFOD]: Waiting for intialization of the apriori static map...");
           continue;
         }
       
         if (!m_sensor_initialized)
         {
-          NODELET_INFO_ONCE("[PCLDetector]: Waiting for intialization of sensor configuration...");
+          NODELET_INFO_ONCE("[VoFOD]: Waiting for intialization of sensor configuration...");
           continue;
         }
       
@@ -1318,11 +1318,11 @@ namespace vofod
       
       //}
 
-      std::thread bgclusters_thread(&PCLDetector::bgclusters_loop, this);
-      std::thread rangefinder_thread(&PCLDetector::rangefinder_loop, this);
+      std::thread bgclusters_thread(&VoFOD::bgclusters_loop, this);
+      std::thread rangefinder_thread(&VoFOD::rangefinder_loop, this);
       std::vector<std::thread> pointcloud_threads;
       for (int it = 0; it < m_n_pc_threads; it++)
-        pointcloud_threads.emplace_back(&PCLDetector::pointcloud_loop, this, it);
+        pointcloud_threads.emplace_back(&VoFOD::pointcloud_loop, this, it);
 
       // keep publishing some debug stuff
       while (ros::ok())
@@ -1460,13 +1460,13 @@ namespace vofod
             /* if (ray_dist > 0.0f) */
             /* { */
             /*   if ((pt_dir - dir1).norm() > 1e-3f) */
-            /*     ROS_ERROR("[PCLDetector]: Point dir ([%f, %f, %f]m) and LUT dir ([%f, %f, %f]m) are different (diff: %fm)!", pt_dir.x(), pt_dir.y(), pt_dir.z(), dir1.x(), dir1.y(), dir1.z(), (pt_dir - dir1).norm()); */
+            /*     ROS_ERROR("[VoFOD]: Point dir ([%f, %f, %f]m) and LUT dir ([%f, %f, %f]m) are different (diff: %fm)!", pt_dir.x(), pt_dir.y(), pt_dir.z(), dir1.x(), dir1.y(), dir1.z(), (pt_dir - dir1).norm()); */
             /*   if (std::abs(pt_dist - dist) > 1e-3f) */
-            /*     ROS_ERROR("[PCLDetector]: Point dist (%fm) and range (%fm) are different!", pt_dist, ray_dist); */
+            /*     ROS_ERROR("[VoFOD]: Point dist (%fm) and range (%fm) are different!", pt_dist, ray_dist); */
             /*   if (1.0f - dir1.norm() > 1e-3f) */
-            /*     ROS_ERROR("[PCLDetector]: Direction from LUT is not normalized (norm is %fm)!", dir1.norm()); */
+            /*     ROS_ERROR("[VoFOD]: Direction from LUT is not normalized (norm is %fm)!", dir1.norm()); */
             /*   if (1.0f - dir.norm() > 1e-3f) */
-            /*     ROS_ERROR("[PCLDetector]: Transformed direction is not normalized (norm is %fm)!", dir.norm()); */
+            /*     ROS_ERROR("[VoFOD]: Transformed direction is not normalized (norm is %fm)!", dir.norm()); */
             /* } */
             
             //}
@@ -1590,7 +1590,7 @@ namespace vofod
                  const float w1 = std::clamp(std::pow(1.0f - w_update_single, detection_its_diff), 0.0f, 1.0f);
                  const float w2 = 1.0f - w1;
                 /* if (w1 < 0.0f || w2 < 0.0f) */
-                /*   ROS_ERROR("[PCLDetector]: Invalid weight: w1 = %.2f, w2 = %.2f!", w1, w2); */
+                /*   ROS_ERROR("[VoFOD]: Invalid weight: w1 = %.2f, w2 = %.2f!", w1, w2); */
                  mapval = w1*mapval + w2*ray_update_score;
                }
              }
@@ -1613,7 +1613,7 @@ namespace vofod
       m_voxel_map.resize(m_oparea_offset_x, m_oparea_offset_y, m_oparea_offset_z, m_oparea_size_x, m_oparea_size_y, m_oparea_size_z, m_vmap_voxel_size);
       m_voxel_map.setTo(m_vmap_init_score);
       const auto [vmap_size_x, vmap_size_y, vmap_size_z] = m_voxel_map.sizesIdx();
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[PCLDetector]: Voxel map reset to [" << vmap_size_x << ", " << vmap_size_y << ", " << vmap_size_z << "] size.");
+      NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Voxel map reset to [" << vmap_size_x << ", " << vmap_size_y << ", " << vmap_size_z << "] size.");
 
       m_voxel_flags.resizeAs(m_voxel_map);
       m_voxel_flags.addVisualizationThreshold(m_vflags_point-0.1, m_vflags_color_background);
@@ -1625,7 +1625,7 @@ namespace vofod
       m_voxel_raycast.addVisualizationThreshold(m_vflags_unknown-0.1, m_vflags_color_unknown);
       m_detection_its = 0;
 
-      NODELET_WARN_THROTTLE(1.0, "[PCLDetector]: Voxelmaps reset!");
+      NODELET_WARN_THROTTLE(1.0, "[VoFOD]: Voxelmaps reset!");
     }
 
     //}
@@ -1823,7 +1823,7 @@ namespace vofod
         if (n_verts == 3)
         {
           if (vert.vertices.size() != n_verts)
-            ROS_WARN_THROTTLE(0.1, "[PCLDetector]: Number of vertices in mesh is incosistent (expected: %lu, got %lu)!", n_verts, vert.vertices.size());
+            ROS_WARN_THROTTLE(0.1, "[VoFOD]: Number of vertices in mesh is incosistent (expected: %lu, got %lu)!", n_verts, vert.vertices.size());
           fill_marker_pts_triangles(vert, mesh_cloud, ret.points);
         } else
           fill_marker_pts_lines(vert, mesh_cloud, ret.points);
@@ -1888,17 +1888,17 @@ namespace vofod
     
           if ((pt_dir - lut_dir).norm() > 1e-3f)
           {
-            ROS_ERROR("[PCLDetector]: Point dir #%u [%f, %f, %f]m and LUT dir #%u [%f, %f, %f]m are different (diff: %fm)!", idx, pt_dir.x(), pt_dir.y(), pt_dir.z(), idx, lut_dir.x(), lut_dir.y(), lut_dir.z(), (pt_dir - lut_dir).norm());
+            ROS_ERROR("[VoFOD]: Point dir #%u [%f, %f, %f]m and LUT dir #%u [%f, %f, %f]m are different (diff: %fm)!", idx, pt_dir.x(), pt_dir.y(), pt_dir.z(), idx, lut_dir.x(), lut_dir.y(), lut_dir.z(), (pt_dir - lut_dir).norm());
             params_ok = false;
           }
           if (std::abs(pt_dist - lut_dist) > 1e-3f)
           {
-            ROS_ERROR("[PCLDetector]: Point dist #%u %fm and range #%u %fm are different!", idx, pt_dist, idx, lut_dist);
+            ROS_ERROR("[VoFOD]: Point dist #%u %fm and range #%u %fm are different!", idx, pt_dist, idx, lut_dist);
             params_ok = false;
           }
           if (1.0f - lut_dir.norm() > 1e-3f)
           {
-            ROS_ERROR("[PCLDetector]: Direction from LUT is not normalized (norm is %fm)!", lut_dir.norm());
+            ROS_ERROR("[VoFOD]: Direction from LUT is not normalized (norm is %fm)!", lut_dir.norm());
             params_ok = false;
           }
     
@@ -2335,8 +2335,8 @@ namespace vofod
     VoxelMap m_voxel_flags;
     VoxelMap m_voxel_raycast;
 
-  };  // class PCLDetector
+  };  // class VoFOD
 }     // namespace vofod
 
 #include <pluginlib/class_list_macros.h>
-PLUGINLIB_EXPORT_CLASS(vofod::PCLDetector, nodelet::Nodelet)
+PLUGINLIB_EXPORT_CLASS(vofod::VoFOD, nodelet::Nodelet)
