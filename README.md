@@ -1,12 +1,17 @@
-# Volumetric Flying Object Detection (VOFOD)
+# Volumetric Flying Object Detection (VoFOD)
+
+This is an implementation of the Volumetric Flying Object Detection (VoFOD) proposed in the paper "On Onboard LiDAR-based Flying Object Detection" (see bottom of this Readme).
+VoFOD is a system developed for robust and accurate detection of UAVs using a LiDAR (or a similar spatial sensor) onboard another UAV without relying on markers of any kind.
+For more details, see the paper.
 
 ## Installation
 
 Prequisites:
 
 * git (`sudo apt install git`)
+* Ubuntu 20.04 (may work on other distros, this one is tested)
 
-Installation instructions:
+Installation instructions (you can just copy & paste them into a terminal):
 
 1. Install [ROS Noetic](http://wiki.ros.org/noetic):
 ```
@@ -37,14 +42,17 @@ git clone git@github.com:ctu-mrs/vofod.git ~/git/vofod        # clone this repos
 ln -s ~/git/vofod ~/workspace/src                             # create a symbolic link of the repository to the workspace
 cd ~/workspace/src && catkin build vofod                      # build the package within the workspace
 ```
-5. Start the basic simulation example:
+
+That's it! Now you can start the basic simulation example:
 ```
 source ~/workspace/devel/setup.bash     # source the workspace to see the packages within
 roscd vofod/tmux/simulation             # change directory to the one containing the tmux script
 ./start.sh
 ```
 
-Readme is TBD
+After this, you should see something like the followng:
+![VoFOD running in the Gazebo simulator](https://github.com/ctu-mrs/vofod/raw/gifs/vofod_gazebo.gif)
+The red sphere in Rviz is the detection of the other UAV.
 
 ## See also
 
@@ -52,7 +60,7 @@ Readme is TBD
 * MRS UAV System: [https://github.com/ctu-mrs/mrs_uav_system](https://github.com/ctu-mrs/mrs_uav_system)
 * Webpage with related multimedia materials: [https://mrs.felk.cvut.cz/flying-object-detection](https://mrs.felk.cvut.cz/flying-object-detection)
 
-# Cite as
+## Cite as
 
 Matouš Vrba, Viktor Walter, Václav Pritzl, Michal Pliska, Tomáš Báča, Vojtěch Spurný, Daniel Heřt, and Martin Saska, "**On Onboard LiDAR-based Flying Object Detection**," arXiv preprint 2303.05404, 2023.
 
