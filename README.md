@@ -50,9 +50,11 @@ roscd vofod/tmux/simulation             # change directory to the one containing
 ./start.sh
 ```
 
-After this, you should see something like the followng:
+After this, you should see something like the following:
+
 ![VoFOD running in the Gazebo simulator](https://github.com/ctu-mrs/vofod/raw/gifs/vofod_gazebo.gif)
-The red sphere in Rviz is the detection of the other UAV.
+
+The red sphere in Rviz on the right is the detection of the other UAV, and the green cubes represent the occupied voxels.
 
 ## See also
 
