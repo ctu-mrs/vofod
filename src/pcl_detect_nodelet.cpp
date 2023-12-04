@@ -2336,7 +2336,7 @@ namespace vofod
     VoxelMap m_voxel_raycast;
 
   };  // class PCLDetector
-};    // namespace vofod
+}     // namespace vofod
 
 #include <pluginlib/class_list_macros.h>
 PLUGINLIB_EXPORT_CLASS(vofod::PCLDetector, nodelet::Nodelet)

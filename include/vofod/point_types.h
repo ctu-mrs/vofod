@@ -41,6 +41,7 @@
 #pragma GCC diagnostic push 
 // turn off the specific warning. Can also use "-Wall"
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic ignored "-Wpedantic"
 #include <ouster_ros/point.h>
 // turn the warnings back on
 #pragma GCC diagnostic pop

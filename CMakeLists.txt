@@ -3,6 +3,29 @@ cmake_minimum_required(VERSION 2.8.3)
 cmake_policy(SET CMP0048 NEW)
 project(vofod VERSION 666)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_compile_options(-Wall)
+add_compile_options(-Wextra)
+add_compile_options(-Wpedantic)
+
+add_compile_options(-DNDEBUG)
+add_compile_options(-O3)
+
+# add_compile_options("-DEIGEN_INITIALIZE_MATRICES_BY_NAN")
+# add_compile_options("-DDISABLE_PARALLELIZATION")
+# add_compile_options(-g)
+# add_compile_options(-Og)
+# add_definitions(-fsanitize=address,undefined,alignment,bounds)
+# add_link_options(-fsanitize=address,undefined,alignment,bounds)
+# add_definitions(-fsanitize=thread)
+# add_link_options(-fsanitize=thread)
+
+# remove warning info from PCL
+set(PCL_FIND_QUIETLY INTERNAL)
+
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
@@ -34,29 +57,9 @@ find_package(catkin REQUIRED COMPONENTS
   visualization_msgs
 )
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-# set(CC "clang-12")
-# set(CXX "clang++-12")
-# set(CMAKE_CXX_INCLUDE_WHAT_YOU_USE "include-what-you-use")
-
-add_compile_options("-Wall")
-add_compile_options("-Wextra")
-add_compile_options("-DNDEBUG")
-# add_compile_options("-DEIGEN_INITIALIZE_MATRICES_BY_NAN")
-# add_compile_options("-DDISABLE_PARALLELIZATION")
-add_compile_options("-g")
-add_compile_options("-Og")
-# add_definitions(-fsanitize=address,undefined,alignment,bounds)
-# add_link_options(-fsanitize=address,undefined,alignment,bounds)
-# add_definitions(-fsanitize=thread)
-# add_link_options(-fsanitize=thread)
-
 find_package(OpenCV REQUIRED)
 
-find_package(PCL REQUIRED)
+find_package(pcl_ros REQUIRED)
 
 # include Eigen3
 find_package(Eigen3 REQUIRED)
@@ -108,7 +111,7 @@ include_directories(include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
-  ${PCL_INCLUDE_DIRS}
+  ${pcl_ros_INCLUDE_DIRS}
 )
 
 add_library(PCLDetector src/pcl_detect_nodelet.cpp src/voxel_map.cpp src/voxel_grid_weighted.cpp src/voxel_grid_counted.cpp src/pcl_loader.cpp)
@@ -119,9 +122,9 @@ add_dependencies(PCLDetector
 target_link_libraries(PCLDetector
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  ${PCL_LIBRARIES}
+  ${pcl_ros_LIBRARIES}
 )
-target_include_directories(PCLDetector SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
+target_include_directories(PCLDetector SYSTEM PRIVATE ${pcl_ros_INCLUDE_DIRS})
 
 add_library(MaskCreator src/mask_creator.cpp)
 add_dependencies(MaskCreator
@@ -131,6 +134,6 @@ add_dependencies(MaskCreator
 target_link_libraries(MaskCreator
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  ${PCL_LIBRARIES}
+  ${pcl_ros_LIBRARIES}
 )
-target_include_directories(MaskCreator SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
+target_include_directories(MaskCreator SYSTEM PRIVATE ${pcl_ros_INCLUDE_DIRS})

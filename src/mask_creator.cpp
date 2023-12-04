@@ -303,7 +303,7 @@ namespace vofod
     int m_sensor_hrays;
 
   };  // class PCLDetector
-};    // namespace vofod
+}     // namespace vofod
 
 #include <pluginlib/class_list_macros.h>
 PLUGINLIB_EXPORT_CLASS(vofod::MaskCreator, nodelet::Nodelet)

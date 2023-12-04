@@ -4,7 +4,7 @@
 
 using namespace vofod;
 
-VoxelMap::VoxelMap() : m_size_x(0), m_size_y(0), m_size_z(0) {};
+VoxelMap::VoxelMap() : m_size_x(0), m_size_y(0), m_size_z(0) {}
 
 /* resize() method overloads //{ */
 
