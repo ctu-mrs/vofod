@@ -8,8 +8,9 @@ For more details, see the paper.
 
 Prequisites:
 
-* git (`sudo apt install git`)
 * Ubuntu 20.04 (may work on other distros, this one is tested)
+* git (`sudo apt install git`)
+* curl (`sudo apt install curl`)
 
 Installation instructions (you can just copy & paste them into a terminal):
 

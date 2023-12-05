@@ -47,14 +47,14 @@ windows:
         - export UAV_NAME=uav1; waitForControl; rosservice call /$UAV_NAME/hw_api/arming 1; sleep 2; rosservice call /$UAV_NAME/hw_api/offboard
         - export UAV_NAME=uav2; waitForHw; roslaunch mrs_uav_autostart automatic_start.launch
         - export UAV_NAME=uav2; waitForControl; rosservice call /$UAV_NAME/hw_api/arming 1; sleep 2; rosservice call /$UAV_NAME/hw_api/offboard
-        - waitForOffboard; sleep 15; roslaunch mrs_uav_trajectory_loader load.launch config:=`rospack find vofod`/tmux/simulation/config/trajectories/params.yaml
+        - waitForOffboard; sleep 15; roslaunch mrs_uav_trajectory_loader load.launch config:=$VOFOD_PATH/tmux/simulation/config/trajectories/params.yaml
   - rviz:
       layout: tiled
       panes:
         - waitForControl; rviz -d $VOFOD_PATH/rviz/uav1.rviz
         - waitForControl; roslaunch mrs_rviz_plugins load_robot.launch
         - waitForControl; roslaunch mrs_rviz_plugins rviz_interface.launch
-  - detect:
+  - detection:
       layout: tiled
       panes:
         - export UAV_NAME=uav1; waitForControl; roslaunch vofod detect.launch world_frame_id:=$UAV_NAME/world_origin apriori_map_config_filename:=$VOFOD_PATH/config/apriori_maps/sim.yaml sensor_config_filename:=$VOFOD_PATH/config/sensors/os1-128.yaml

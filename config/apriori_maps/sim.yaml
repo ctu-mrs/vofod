@@ -8,7 +8,7 @@ apriori_map:
 operation_area:
   offset: # offset of the box center relative to the global origin
     x: 0.0 # meters
-    y: 00.0 # meters
+    y: 0.0 # meters
     z: -1.25 # meters - this is the lowest value, not center
   size:
     x: 50.0 # meters
