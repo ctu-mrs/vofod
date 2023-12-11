@@ -56,9 +56,9 @@
       <rosparam file="$(find vofod)/config/visualization.yaml" />
     
       <!-- Subscribers -->
-      <!-- <remap from="~pointcloud" to="os_cloud_nodelet/noisy_points" /> -->
-      <remap from="~pointcloud" to="os_cloud_nodelet/points" />
+      <remap from="~pointcloud" to="os_cloud_nodelet_deskewed/points_deskewed" />
       <remap from="~height_rangefinder" to="$(arg rangefinder_topic)" />
+      <remap from="~tsdf_layer_in" to="voxblox_node/tsdf_map_out" />
 
       <!-- Publishers -->
       <remap from="~lidar_fov" to="~lidar_fov$(arg suf)" />

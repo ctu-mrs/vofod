@@ -42,6 +42,11 @@
 
 #include <pcl/features/moment_of_inertia_estimation.h>
 
+#include <voxblox_ros/tsdf_server.h>
+#include <voxblox_ros/conversions.h>
+#include <voxblox_ros/ros_params.h>
+#include <voxblox_msgs/Layer.h>
+
 #include <opencv2/imgcodecs.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -178,6 +183,10 @@ namespace vofod
       pl.loadParam("voxel_map/voxel_size", m_vmap_voxel_size);
       pl.loadParam("voxel_map/scores/init", m_vmap_init_score);
 
+      voxblox::TsdfMap::Config tsdf_config;
+      tsdf_config.tsdf_voxel_size = m_vmap_voxel_size;
+      tsdf_config.tsdf_voxels_per_side = pl.loadParam2<int>("voxel_map/tsdf/voxels_per_side");
+
       pl.loadParam("voxel_map/thresholds/apriori_map", m_vmap_threshold_apriori_map);
       
       pl.loadParam("voxel_map/colors/apriori_map", m_vmap_color_apriori_map);
@@ -245,6 +254,8 @@ namespace vofod
       // Initialize subscribers
       mrs_lib::construct_object(m_sh_pc, shopts, "pointcloud");
       mrs_lib::construct_object(m_sh_rangefinder, shopts, "height_rangefinder");
+      mrs_lib::construct_object(m_sh_tsdf_layer, shopts, "tsdf_layer_in", &VoFOD::tsdf_layer_callback, this);
+
       // Initialize publishers
       m_pub_filtered_input_pc = nh.advertise<sensor_msgs::PointCloud2>("filtered_input_pc", 1);
       m_pub_weighted_input_pc = nh.advertise<sensor_msgs::PointCloud2>("weighted_input_pc", 1);
@@ -277,6 +288,8 @@ namespace vofod
       //}
 
       reset();
+
+      m_tsdf_map = std::make_unique<voxblox::TsdfMap>(tsdf_config);
 
       // initialize the apriori map
       m_sure_background_sufficient = false;
@@ -1389,6 +1402,14 @@ namespace vofod
     }
     //}
 
+    void tsdf_layer_callback(const voxblox_msgs::Layer::ConstPtr msg_ptr)
+    {
+      const bool success = voxblox::deserializeMsgToLayer<voxblox::TsdfVoxel>(*msg_ptr, m_tsdf_map->getTsdfLayerPtr());
+
+      if (!success)
+        ROS_ERROR_THROTTLE(10, "Got an invalid TSDF map message!");
+    }
+
   private:
     /* raycast_cloud() method //{ */
     void raycast_cloud(const pc_t::ConstPtr cloud, const Eigen::Affine3f& tf)
@@ -2210,6 +2231,7 @@ namespace vofod
     std::unique_ptr<tf2_ros::TransformListener> m_tf_listener_ptr;
     mrs_lib::SubscribeHandler<pc_t> m_sh_pc;
     mrs_lib::SubscribeHandler<sensor_msgs::Range> m_sh_rangefinder;
+    mrs_lib::SubscribeHandler<voxblox_msgs::Layer> m_sh_tsdf_layer;
 
     ros::Publisher m_pub_vmap;
     ros::Publisher m_pub_update_flags;
@@ -2311,6 +2333,8 @@ namespace vofod
     // --------------------------------------------------------------
     // |                   Other member variables                   |
     // --------------------------------------------------------------
+
+    std::unique_ptr<voxblox::TsdfMap> m_tsdf_map;
 
     bool m_apriori_map_initialized;
     bool m_sensor_initialized;
