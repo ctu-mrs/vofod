@@ -300,8 +300,8 @@ namespace vofod
 
       // initialize the sensor information
       m_sensor_initialized = false;
-      m_sensor_params_checked = false;
-      m_sensor_params_ok = false;
+      m_sensor_params_checked = !m_sensor_check_consistency;
+      m_sensor_params_ok = !m_sensor_check_consistency;
       std::thread sensor_load_thread(&VoFOD::initialize_sensor, this);
       sensor_load_thread.detach();
 
@@ -742,9 +742,11 @@ namespace vofod
         // check if this cluster contains at least one close point
         for (const auto& idx : cluster_indices.indices)
         {
-          const auto& pt = cloud->at(idx);
+          const vec3_t& pt = cloud->at(idx).getVector3fMap();
+          const auto voxel = m_tsdf_map->getTsdfLayer().getVoxelPtrByCoordinates(pt);
           // if a neighbor within the 'm_drmgr_ptr->config.ground_points_max_distance' radius was found, this cluster will be classified as a block of ground
-          if (m_voxel_map.hasCloseTo(pt.x, pt.y, pt.z, max_dist, threshold_new_obstacles))
+          /* if (m_voxel_map.hasCloseTo(pt.x, pt.y, pt.z, max_dist, threshold_new_obstacles)) */
+          if (voxel != nullptr && voxel->distance < max_dist)
           {
             // set the corresponding local flag
             is_close = true;
@@ -947,7 +949,6 @@ namespace vofod
       const auto [close_clusters_indices, far_clusters_indices] = findCloseFarClusters(cloud_weighted, clusters_indices);
       stimer.checkpoint("close X far");
 
-      ros::WallTime vmap_lock_t;
       {
         // update the voxel map and flags map
         // prepare the map of flags
@@ -1025,7 +1026,8 @@ namespace vofod
       if (m_pub_background_clusters_pc.getNumSubscribers() > 0)
       {
         pc_XYZR_t::Ptr background_cloud = extractClustersPoints(cloud_weighted, close_clusters_indices);
-        background_cloud->header.stamp = cloud->header.stamp;
+        pcl::transformPointCloud(*background_cloud, *background_cloud, s2w_tf.inverse());
+        background_cloud->header = cloud->header;
         m_pub_background_clusters_pc.publish(background_cloud);
       }
       
