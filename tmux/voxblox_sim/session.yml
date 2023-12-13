@@ -1,0 +1,56 @@
+name: processing
+root: ~/bag_files/eagle/uav93
+startup_window: vofod
+pre_window: export UAV_NAME=uav91; export DETECTOR_PATH=`rospack find vofod`
+windows:
+  - roscore:
+      layout: tiled
+      panes:
+        - roscore
+  - rosbag:
+      layout: tiled
+      panes:
+        - waitForRos; rosparam set use_sim_time true; rosbag play ../uav93/89_2021_07_19_12_23_35_interception_better/_2021-07-19-12-25-51.bag --clock
+        - waitForRos; sleep 1; roslaunch ouster_ros deskewed.launch replay:=true metadata:=`pwd`/../uav93/89_2021_07_19_12_23_35_interception_better/10.10.20.87.json
+  - camera_helpers:
+      layout: tiled
+      panes:
+        - waitForRos; sleep 1; rosrun tf2_ros static_transform_publisher 1 0 0 -1.57 0 -2.35 uav91/fcu usb_cam
+        - waitForRos; sleep 1; roslaunch usb_cam node.launch
+        - waitForRos; sleep 1; rosrun topic_tools transform /mobius/image_raw/compressed /mobius_cor/image_raw/compressed sensor_msgs/CompressedImage 'sensor_msgs.msg.CompressedImage(std_msgs.msg.Header(frame_id=m.header.frame_id, stamp=m.header.stamp - rospy.Duration(0.3)), m.format, m.data)' --import sensor_msgs std_msgs rospy
+        - waitForRos; sleep 1; rosrun topic_tools relay /camera_info /mobius_cor/camera_info
+  - pcl_filter:
+      layout: tiled
+      panes:
+        - waitForRos; sleep 1; roslaunch mrs_pcl_tools pcl_filter.launch topic_3d_lidar_in:=/$UAV_NAME/os_cloud_nodelet_deskewed/points_deskewed
+        - waitForRos; sleep 1; roslaunch mrs_pcl_tools create_freespace_pointcloud.launch topic_3d_lidar_in:=/$UAV_NAME/os_cloud_nodelet_deskewed/points_deskewed
+  - voxblox:
+      layout: tiled
+      panes:
+        - waitForRos; sleep 1; roslaunch voxblox_ros uav.launch
+  # - tf_connector:
+  #     layout: tiled
+  #     panes:
+  #       - waitForRos; sleep 1; roslaunch tf_connector tf_connector.launch
+  - vofod:
+      layout: tiled
+      panes:
+        - waitForRos; sleep 3; roslaunch vofod detect.launch apriori_map_config_filename:="$DETECTOR_PATH/config/apriori_maps/sim.yaml" mask_filename:="$DETECTOR_PATH/masks/eaglemk2_os0_mask.bmp" sensor_check_consistency:=false rangefinder_topic:=/$UAV_NAME/mavros/distance_sensor/garmin
+  # - lidar_track:
+  #     layout: tiled
+  #     panes:
+  #       - waitForRos; sleep 1; roslaunch lidar_tracker lidar_tracker.launch
+  # - pcl_filter:
+  #     layout: tiled
+  #     panes:
+  #       - waitForRos; sleep 1; roslaunch mrs_pcl_tools pcl_filter.launch custom_config:="$DETECTOR_PATH/config/pcl_filter_self.yaml" name_suffix:=self topic_3d_lidar_out:=/pts_self
+  #       - waitForRos; sleep 1; roslaunch mrs_pcl_tools pcl_filter.launch custom_config:="$DETECTOR_PATH/config/pcl_filter_inarena.yaml" name_suffix:=target topic_3d_lidar_out:=/pts_target
+  - robot_models:
+      layout: tiled
+      panes:
+        - waitForRos; sleep 1; roslaunch eagle_gazebo_resources load_rviz_robot.launch
+        # - waitForRos; export UAV_NAME=uav11; sleep 1; roslaunch mrs_rviz_plugins load_robot.launch uav_type:=f450
+  - rviz:
+      layout: tiled
+      panes:
+        - waitForRos; sleep 1; rviz -d `rospack find voxblox_ros`/rviz/uav91.rviz

@@ -178,6 +178,9 @@ namespace vofod
       pl.loadParam("pointcloud_threads", m_n_pc_threads);
       pl.loadParam("throttle_period", m_throttle_period);
 
+      pl.loadParam("input/range_filter_length", m_range_filter_length);
+      m_range_points_buffer.reserve(m_range_filter_length);
+
       const auto static_cloud_filename = pl.loadParam2<std::string>("static_cloud_filename", "");
 
       pl.loadParam("voxel_map/voxel_size", m_vmap_voxel_size);
@@ -257,6 +260,7 @@ namespace vofod
       mrs_lib::construct_object(m_sh_tsdf_layer, shopts, "tsdf_layer_in", &VoFOD::tsdf_layer_callback, this);
 
       // Initialize publishers
+      m_pub_rangefinder_pc = nh.advertise<sensor_msgs::PointCloud2>("rangefinder_pc", 1);
       m_pub_filtered_input_pc = nh.advertise<sensor_msgs::PointCloud2>("filtered_input_pc", 1);
       m_pub_weighted_input_pc = nh.advertise<sensor_msgs::PointCloud2>("weighted_input_pc", 1);
       m_pub_background_pc = nh.advertise<sensor_msgs::PointCloud2>("background_pc", 1);
@@ -597,6 +601,8 @@ namespace vofod
       if (msg->range <= msg->min_range && msg->range >= msg->max_range)
         return;
 
+      const vec3_t range_pt(msg->range, 0.0, 0.0);
+
       /* transform the measured point to the static world frame //{ */
 
       Eigen::Affine3d s2w_tf;
@@ -606,7 +612,7 @@ namespace vofod
         NODELET_ERROR_THROTTLE(1.0, "[VoFOD]: Could not transform point to global, skipping.");
         return;
       }
-      const vec3_t pt_tfd = s2w_tf.cast<float>() * vec3_t(msg->range, 0.0, 0.0);
+      const vec3_t pt_tfd = s2w_tf.cast<float>() * range_pt;
 
       //}
 
@@ -614,6 +620,27 @@ namespace vofod
       {
         NODELET_ERROR_THROTTLE(0.5, "[VoFOD]: Range measurement is outside of the operational area! Cannot update ground map.");
         return;
+      }
+
+      m_range_points_buffer.push_back(pt_tfd);
+      if ((int)m_range_points_buffer.size() >= m_range_filter_length)
+      {
+        vec3_t acc_pt = vec3_t::Zero();
+        for (const auto& buf_pt : m_range_points_buffer)
+          acc_pt += buf_pt;
+        const vec3_t mean_pt = acc_pt / m_range_points_buffer.size();
+        const vec3_t pt_sensor_frame = s2w_tf.inverse().cast<float>() * mean_pt;
+        m_range_points_buffer.clear();
+
+        // publish the point as a pointcloud
+        pt_t pt;
+        pt.getVector3fMap() = pt_sensor_frame;
+        pc_t range_pc;
+        range_pc.push_back(pt);
+        sensor_msgs::PointCloud2 range_pc_msg;
+        pcl::toROSMsg(range_pc, range_pc_msg);
+        range_pc_msg.header = msg->header;
+        m_pub_rangefinder_pc.publish(range_pc_msg);
       }
 
       {
@@ -669,6 +696,7 @@ namespace vofod
       NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Input PC after CropBox 2: " << cloud_filtered->size() << " points");
     
       pcl::PointCloud<pt_XYZR_t>::Ptr cloud_weighted = boost::make_shared<pcl::PointCloud<pt_XYZR_t>>();
+      if (m_drmgr_ptr->config.input__voxel_grid_filter)
       {
         VoxelGridWeighted vgw;
         vgw.setInputCloud(cloud_filtered);
@@ -677,6 +705,19 @@ namespace vofod
         vgw.setVoxelAlign({align_x, align_y, align_z, 0.0f});
         vgw.filter(*cloud_weighted);
         cloud_weighted->header.frame_id = cloud_filtered->header.frame_id;
+      }
+      else
+      {
+        cloud_weighted->resize(cloud_filtered->size());
+        for (size_t it = 0; it < cloud_filtered->size(); it++)
+        {
+          const auto& pt_old = cloud_filtered->at(it);
+          auto& pt_new = cloud_weighted->at(it);
+          pt_new.x = pt_old.x;
+          pt_new.y = pt_old.y;
+          pt_new.z = pt_old.z;
+          pt_new.range = 1;
+        }
       }
 
       // publish some debug shit
@@ -2239,6 +2280,7 @@ namespace vofod
     ros::Publisher m_pub_update_flags;
     ros::Publisher m_pub_oparea;
 
+    ros::Publisher m_pub_rangefinder_pc;
     ros::Publisher m_pub_filtered_input_pc;
     ros::Publisher m_pub_weighted_input_pc;
     ros::Publisher m_pub_background_pc;
@@ -2335,6 +2377,9 @@ namespace vofod
     // --------------------------------------------------------------
     // |                   Other member variables                   |
     // --------------------------------------------------------------
+
+    int m_range_filter_length;
+    std::vector<vec3_t> m_range_points_buffer;
 
     std::unique_ptr<voxblox::TsdfMap> m_tsdf_map;
 

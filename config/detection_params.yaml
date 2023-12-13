@@ -8,6 +8,10 @@ ground_points_max_distance: 1.5 # metres
 # before classification may begin
 background_sufficient_points_ratio: 0.15
 
+input:
+  range_filter_length: 10
+  voxel_grid_filter: false
+
 output:
   position_sigma: 0.1
 

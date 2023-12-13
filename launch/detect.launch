@@ -61,6 +61,7 @@
       <remap from="~tsdf_layer_in" to="voxblox_node/tsdf_map_out" />
 
       <!-- Publishers -->
+      <remap from="~rangefinder_pc" to="~background_clusters_pc$(arg suf)" />
       <remap from="~lidar_fov" to="~lidar_fov$(arg suf)" />
       <remap from="~apriori_pc" to="~apriori_pc$(arg suf)" />
       <remap from="~background_clusters_pc" to="~background_clusters_pc$(arg suf)" />
