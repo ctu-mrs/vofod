@@ -1,7 +1,7 @@
 name: processing
-root: ~/bag_files/eagle/uav93
+root: ~/bag_files/eagle
 startup_window: vofod
-pre_window: export UAV_NAME=uav91; export DETECTOR_PATH=`rospack find vofod`
+pre_window: export UAV_NAME=uav91; export DETECTOR_PATH=`rospack find vofod`; export RUN_TYPE=rosbag
 windows:
   - roscore:
       layout: tiled
@@ -10,8 +10,8 @@ windows:
   - rosbag:
       layout: tiled
       panes:
-        - waitForRos; rosparam set use_sim_time true; rosbag play ../uav93/89_2021_07_19_12_23_35_interception_better/_2021-07-19-12-25-51.bag --clock
-        - waitForRos; sleep 1; roslaunch ouster_ros deskewed.launch replay:=true metadata:=`pwd`/../uav93/89_2021_07_19_12_23_35_interception_better/10.10.20.87.json
+        - waitForRos; rosparam set use_sim_time true; rosbag play ./89_2021_07_19_12_23_35_interception_better/_2021-07-19-12-25-51.bag --clock
+        - waitForRos; sleep 1; roslaunch ouster_ros deskewed.launch replay:=true metadata:=`pwd`/89_2021_07_19_12_23_35_interception_better/10.10.20.87.json
   - camera_helpers:
       layout: tiled
       panes:

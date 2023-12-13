@@ -192,11 +192,11 @@ namespace hash_tuple
   {
     size_t
     operator()(std::tuple<TT...> const& tt) const
-    {                                              
+    {
         size_t seed = 0;                             
         hash_value_impl<std::tuple<TT...> >::apply(seed, tt);    
         return seed;                                 
-    }                                              
+    }
   };
 
 }

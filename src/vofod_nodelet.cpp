@@ -42,6 +42,7 @@
 
 #include <pcl/features/moment_of_inertia_estimation.h>
 
+#include <voxblox/core/common.h>
 #include <voxblox_ros/tsdf_server.h>
 #include <voxblox_ros/conversions.h>
 #include <voxblox_ros/ros_params.h>
@@ -269,6 +270,7 @@ namespace vofod
       m_pub_oparea = nh.advertise<visualization_msgs::Marker>("operation_area", 1, true);
       m_pub_apriori_pc = nh.advertise<sensor_msgs::PointCloud2>("apriori_pc", 1, true);
       m_pub_background_clusters_pc = nh.advertise<sensor_msgs::PointCloud2>("background_clusters_pc", 1);
+      m_pub_freecloud_pc = nh.advertise<sensor_msgs::PointCloud2>("freecloud_pc", 1);
       m_pub_sepclusters_pc = nh.advertise<sensor_msgs::PointCloud2>("sepclusters_pc", 1);
       m_pub_sepclusters_cluster_pc = nh.advertise<sensor_msgs::PointCloud2>("sepclusters_cluster_pc", 1);
 
@@ -641,13 +643,14 @@ namespace vofod
         pcl::toROSMsg(range_pc, range_pc_msg);
         range_pc_msg.header = msg->header;
         m_pub_rangefinder_pc.publish(range_pc_msg);
+        NODELET_INFO_THROTTLE(0.5, "[VoFOD]: Publishing range measurement as pointcloud.");
       }
 
       {
         std::scoped_lock lck(m_voxels_mtx);
         auto& mapval = m_voxel_map.at(pt_tfd.x(), pt_tfd.y(), pt_tfd.z());
         mapval = (mapval + m_drmgr_ptr->config.voxel_map__scores__point) / 2.0;
-        NODELET_INFO_THROTTLE(0.5, "[VoFOD]: Range measurement is outside of the operational area! Cannot update ground map.");
+        NODELET_INFO_THROTTLE(0.5, "[VoFOD]: Updating ground map using range measurement.");
       }
     }
 
@@ -759,6 +762,7 @@ namespace vofod
       std::vector<pcl::PointIndices::ConstPtr> far_clusters_indices;
       close_clusters_indices.reserve(clusters_indices.size());
       far_clusters_indices.reserve(clusters_indices.size());
+      const auto min_weight = m_drmgr_ptr->config.ground_points_min_weight;
       const auto max_dist = m_drmgr_ptr->config.ground_points_max_distance;
       const auto threshold_new_obstacles = m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles;
     
@@ -787,7 +791,7 @@ namespace vofod
           const auto voxel = m_tsdf_map->getTsdfLayer().getVoxelPtrByCoordinates(pt);
           // if a neighbor within the 'm_drmgr_ptr->config.ground_points_max_distance' radius was found, this cluster will be classified as a block of ground
           /* if (m_voxel_map.hasCloseTo(pt.x, pt.y, pt.z, max_dist, threshold_new_obstacles)) */
-          if (voxel != nullptr && voxel->distance < max_dist)
+          if (voxel != nullptr && voxel->weight > min_weight && std::abs(voxel->distance) < max_dist)
           {
             // set the corresponding local flag
             is_close = true;
@@ -808,21 +812,15 @@ namespace vofod
     /* extractClustersPoints() method //{ */
     pc_XYZR_t::Ptr extractClustersPoints(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices)
     {
-      pc_XYZR_t::Ptr ret = boost::make_shared<pc_XYZR_t>();
-      size_t pts = 0;
+      auto indices_total = boost::make_shared<pcl::PointIndices>();
       for (const auto& idcs : clusters_indices)
-        pts += idcs->indices.size();
-      ret->reserve(pts);
-    
-      for (const auto& idcs : clusters_indices)
-      {
-        pc_XYZR_t tmp_cloud;
-        pcl::ExtractIndices<pt_XYZR_t> ei;
-        ei.setInputCloud(cloud);
-        ei.setIndices(idcs);
-        ei.filter(tmp_cloud);
-        ret->insert(std::end(*ret), std::begin(tmp_cloud), std::end(tmp_cloud));
-      }
+        indices_total->indices.insert(std::end(indices_total->indices), std::begin(idcs->indices), std::end(idcs->indices));
+
+      auto ret = boost::make_shared<pc_XYZR_t>();
+      pcl::ExtractIndices<pt_XYZR_t> ei;
+      ei.setInputCloud(cloud);
+      ei.setIndices(indices_total);
+      ei.filter(*ret);
       ret->header.frame_id = cloud->header.frame_id;
       return ret;
     }
@@ -1070,6 +1068,31 @@ namespace vofod
         pcl::transformPointCloud(*background_cloud, *background_cloud, s2w_tf.inverse());
         background_cloud->header = cloud->header;
         m_pub_background_clusters_pc.publish(background_cloud);
+      }
+
+      if (m_pub_freecloud_pc.getNumSubscribers() > 0)
+      {
+        const float max_dist = (float)m_drmgr_ptr->config.raycast__max_distance;
+        auto freecloud = boost::make_shared<pc_t>();
+        freecloud->reserve(cloud->size());
+        for (int row = 0; row < (int)cloud->height; row++)
+        {
+          for (int col = 0; col < (int)cloud->width; col++)
+          {
+            const auto pt = cloud->at(col, row);
+            const unsigned idx = row * cloud->width + col;
+            if (pt.range == 0 && m_sensor_mask.at(idx))
+            {
+              const vec3_t dir = m_sensor_xyz_lut.directions.col(idx);
+              const vec3_t npt_eig = max_dist * dir;
+              pt_t npt;
+              npt.getVector3fMap() = npt_eig;
+              freecloud->push_back(npt);
+            }
+          }
+        }
+        freecloud->header = cloud->header;
+        m_pub_freecloud_pc.publish(freecloud);
       }
       
       if (m_pub_vmap.getNumSubscribers() > 0)
@@ -1517,24 +1540,6 @@ namespace vofod
             const float ray_dist = range_to_meters*float(pt.range);
             const float dist = ray_dist == 0.0f ? max_dist : std::min(ray_dist - m_vmap_voxel_size, max_dist);
 
-            /* some checks (unused) //{ */
-            
-            /* const vec3_t pt_dir = (pt.getVector3fMap() - m_sensor_xyz_lut.offsets.col(idx)).normalized(); */
-            /* const float pt_dist = (pt.getVector3fMap() - m_sensor_xyz_lut.offsets.col(idx)).norm(); */
-            /* if (ray_dist > 0.0f) */
-            /* { */
-            /*   if ((pt_dir - dir1).norm() > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Point dir ([%f, %f, %f]m) and LUT dir ([%f, %f, %f]m) are different (diff: %fm)!", pt_dir.x(), pt_dir.y(), pt_dir.z(), dir1.x(), dir1.y(), dir1.z(), (pt_dir - dir1).norm()); */
-            /*   if (std::abs(pt_dist - dist) > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Point dist (%fm) and range (%fm) are different!", pt_dist, ray_dist); */
-            /*   if (1.0f - dir1.norm() > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Direction from LUT is not normalized (norm is %fm)!", dir1.norm()); */
-            /*   if (1.0f - dir.norm() > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Transformed direction is not normalized (norm is %fm)!", dir.norm()); */
-            /* } */
-            
-            //}
-
             const vec3_t start_pt = tf_rot*m_sensor_xyz_lut.offsets.col(idx) + origin_pt;
       
             // TODO: reduce to just one check with max. ray offset
@@ -1760,6 +1765,7 @@ namespace vofod
         for (const auto idx : cluster_indices->indices)
         {
           const auto& pt = cloud->at(idx);
+          /* const auto [is_connected, explored_idxs] = exploreToGround(m_tsdf_map, pt.x, pt.y, pt.z, max_explore_voxel_size); */
           const auto [is_connected, explored_idxs] = m_voxel_map.exploreToGround(pt.x, pt.y, pt.z, m_drmgr_ptr->config.voxel_map__thresholds__frontiers, m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles, max_explore_voxel_size);
           // if it's connected to ground through unknown voxels, we're done here
           if (is_connected)
@@ -1789,6 +1795,78 @@ namespace vofod
         ret.cclass = cluster_class_t::unknown;
       return ret;
     }
+    //}
+
+    /* exploreToGround() method //{ */
+
+    template <typename Type>
+    struct hash_evec
+    {
+      size_t operator() (const Eigen::Matrix<Type, 3, 1>& evec) const
+      {
+          size_t seed = 0;
+          seed ^= std::hash<Type>(evec.x()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+          seed ^= std::hash<Type>(evec.y()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+          seed ^= std::hash<Type>(evec.z()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+          return seed;                                 
+      }
+    };
+    
+    bool exploreToGround(const voxblox::Layer<voxblox::TsdfVoxel>& map, const vec3_t coords, const int max_voxel_dist) const
+    {
+      using bidx_t = voxblox::BlockIndex;
+      using vidx_t = voxblox::VoxelIndex;
+      using gidx_t = voxblox::GlobalIndex;
+      using vox_t = voxblox::TsdfVoxel;
+      using neighborhood_t = voxblox::Neighborhood<voxblox::Connectivity::kSix>;
+      using neighbors_t = neighborhood_t::IndexMatrix;
+
+      const float max_voxel_dist_sq = float(max_voxel_dist)*float(max_voxel_dist);
+      const float min_ground_dist = 1.5;
+      const float min_weight = 5;
+
+      const bidx_t orig_bidx = map.computeBlockIndexFromCoordinates(coords);
+      const vidx_t orig_vidx = map.getBlockByIndex(orig_bidx).computeVoxelIndexFromCoordinates(coords);
+      const gidx_t orig_gidx = voxblox::getGlobalVoxelIndexFromBlockAndVoxelIndex(orig_bidx, orig_vidx, map.voxels_per_side());
+    
+      std::unordered_set<gidx_t, hash_evec<gidx_t::Scalar>> explored;
+      std::vector<gidx_t> explored_unknown;
+      std::vector<gidx_t> to_explore;
+      neighborhood_t nh;
+      to_explore.push_back(orig_gidx);
+    
+      while (!to_explore.empty())
+      {
+        const auto cur_idx = to_explore.back();
+        to_explore.pop_back(); // DFS
+        const vox_t* cur_vox = map.getVoxelPtrByGlobalIndex(cur_idx);
+    
+        if (cur_vox->distance < min_ground_dist)
+          return true;
+
+        if (cur_vox->weight < min_weight)
+        {
+          explored_unknown.push_back(cur_idx);
+          // check if we're at the edge of the search area
+          if ((orig_gidx - cur_idx).squaredNorm() == max_voxel_dist_sq)
+            return true; // if so, consider this cluster to be connected to ground
+    
+          neighbors_t neighbors;
+          nh.getFromGlobalIndex(cur_idx, &neighbors);
+          for (int it = 0; it < neighbors.cols(); it++)
+          {
+            const gidx_t neighbor_gidx = neighbors.col(it);
+            if (explored.count(neighbor_gidx) == 0)
+              to_explore.push_back(neighbor_gidx);
+          }
+        }
+    
+        explored.insert(std::move(cur_idx));
+      }
+    
+      return false;
+    }
+    
     //}
 
     /* rotate_covariance() method //{ */
@@ -2286,6 +2364,7 @@ namespace vofod
     ros::Publisher m_pub_background_pc;
     ros::Publisher m_pub_apriori_pc;
     ros::Publisher m_pub_background_clusters_pc;
+    ros::Publisher m_pub_freecloud_pc;
     ros::Publisher m_pub_sure_air_pc;
     ros::Publisher m_pub_sepclusters_pc;
     ros::Publisher m_pub_sepclusters_cluster_pc;

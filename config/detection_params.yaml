@@ -3,6 +3,7 @@ transform_lookup_timeout: 1.0 # seconds
 separate_cluster_removal_period: 0.1 # seconds
 pointcloud_threads: 1
 
+ground_points_min_weight: 1 # measurements
 ground_points_max_distance: 1.5 # metres
 # at least the number of voxels in the xy plane times this ratio of points have to be considered background
 # before classification may begin
