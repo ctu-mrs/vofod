@@ -180,7 +180,7 @@ namespace vofod
       pl.loadParam("throttle_period", m_throttle_period);
 
       pl.loadParam("input/range_filter_length", m_range_filter_length);
-      m_range_points_buffer.reserve(m_range_filter_length);
+      m_ranges_buffer.reserve(m_range_filter_length);
 
       const auto static_cloud_filename = pl.loadParam2<std::string>("static_cloud_filename", "");
 
@@ -624,15 +624,13 @@ namespace vofod
         return;
       }
 
-      m_range_points_buffer.push_back(pt_tfd);
-      if ((int)m_range_points_buffer.size() >= m_range_filter_length)
+      m_ranges_buffer.push_back(msg->range);
+      if ((int)m_ranges_buffer.size() >= m_range_filter_length)
       {
-        vec3_t acc_pt = vec3_t::Zero();
-        for (const auto& buf_pt : m_range_points_buffer)
-          acc_pt += buf_pt;
-        const vec3_t mean_pt = acc_pt / m_range_points_buffer.size();
-        const vec3_t pt_sensor_frame = s2w_tf.inverse().cast<float>() * mean_pt;
-        m_range_points_buffer.clear();
+        std::sort(std::begin(m_ranges_buffer), std::end(m_ranges_buffer));
+        const double median_range = m_ranges_buffer.at(m_ranges_buffer.size()/2);
+        const vec3_t pt_sensor_frame = median_range * vec3_t::UnitX();;
+        m_ranges_buffer.clear();
 
         // publish the point as a pointcloud
         pt_t pt;
@@ -1805,9 +1803,10 @@ namespace vofod
       size_t operator() (const Eigen::Matrix<Type, 3, 1>& evec) const
       {
           size_t seed = 0;
-          seed ^= std::hash<Type>(evec.x()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
-          seed ^= std::hash<Type>(evec.y()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
-          seed ^= std::hash<Type>(evec.z()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+          const std::hash<Type> hsh;
+          seed ^= hsh(evec.x()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+          seed ^= hsh(evec.y()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+          seed ^= hsh(evec.z()) + 0x9e3779b9 + (seed<<6) + (seed>>2);
           return seed;                                 
       }
     };
@@ -2458,7 +2457,7 @@ namespace vofod
     // --------------------------------------------------------------
 
     int m_range_filter_length;
-    std::vector<vec3_t> m_range_points_buffer;
+    std::vector<double> m_ranges_buffer;
 
     std::unique_ptr<voxblox::TsdfMap> m_tsdf_map;
 

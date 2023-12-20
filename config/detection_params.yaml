@@ -10,7 +10,7 @@ ground_points_max_distance: 1.5 # metres
 background_sufficient_points_ratio: 0.15
 
 input:
-  range_filter_length: 10
+  range_filter_length: 9
   voxel_grid_filter: false
 
 output:
