@@ -19,11 +19,6 @@ windows:
         - waitForRos; sleep 1; roslaunch usb_cam node.launch
         - waitForRos; sleep 1; rosrun topic_tools transform /mobius/image_raw/compressed /mobius_cor/image_raw/compressed sensor_msgs/CompressedImage 'sensor_msgs.msg.CompressedImage(std_msgs.msg.Header(frame_id=m.header.frame_id, stamp=m.header.stamp - rospy.Duration(0.3)), m.format, m.data)' --import sensor_msgs std_msgs rospy
         - waitForRos; sleep 1; rosrun topic_tools relay /camera_info /mobius_cor/camera_info
-  - pcl_filter:
-      layout: tiled
-      panes:
-        - waitForRos; sleep 1; roslaunch mrs_pcl_tools pcl_filter.launch topic_3d_lidar_in:=/$UAV_NAME/os_cloud_nodelet_deskewed/points_deskewed
-        - waitForRos; sleep 1; roslaunch mrs_pcl_tools create_freespace_pointcloud.launch topic_3d_lidar_in:=/$UAV_NAME/os_cloud_nodelet_deskewed/points_deskewed
   - voxblox:
       layout: tiled
       panes:

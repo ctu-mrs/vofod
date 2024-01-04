@@ -120,7 +120,7 @@ namespace vofod
     obb_t obb;
     float obb_size = std::numeric_limits<float>::quiet_NaN();
     VoxelMap submap;
-    pc_XYZR_t::ConstPtr pc;
+    pc_XYZI_t::ConstPtr pc;
     pcl::PointIndices::ConstPtr pc_indices;
   };
   
@@ -633,9 +633,9 @@ namespace vofod
         m_ranges_buffer.clear();
 
         // publish the point as a pointcloud
-        pt_t pt;
+        pt_XYZ_t pt;
         pt.getVector3fMap() = pt_sensor_frame;
-        pc_t range_pc;
+        pc_XYZ_t range_pc;
         range_pc.push_back(pt);
         sensor_msgs::PointCloud2 range_pc_msg;
         pcl::toROSMsg(range_pc, range_pc_msg);
@@ -658,7 +658,7 @@ namespace vofod
 
     /* filterAndTransform() method //{ */
     
-    pc_XYZR_t::Ptr filterAndTransform(const pc_t::ConstPtr cloud, const Eigen::Affine3f& s2w_tf)
+    pc_XYZI_t::Ptr filterAndTransform(const pc_t::ConstPtr cloud, const Eigen::Affine3f& s2w_tf)
     {
       pc_t::Ptr cloud_filtered = boost::make_shared<pc_t>();
       /* filter by cropping points inside a box, relative to the sensor //{ */
@@ -696,7 +696,7 @@ namespace vofod
       //}
       NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Input PC after CropBox 2: " << cloud_filtered->size() << " points");
     
-      pcl::PointCloud<pt_XYZR_t>::Ptr cloud_weighted = boost::make_shared<pcl::PointCloud<pt_XYZR_t>>();
+      auto cloud_weighted = boost::make_shared<pcl::PointCloud<pt_XYZI_t>>();
       if (m_drmgr_ptr->config.input__voxel_grid_filter)
       {
         VoxelGridWeighted vgw;
@@ -717,7 +717,7 @@ namespace vofod
           pt_new.x = pt_old.x;
           pt_new.y = pt_old.y;
           pt_new.z = pt_old.z;
-          pt_new.range = 1;
+          pt_new.intensity = 1;
         }
       }
 
@@ -754,7 +754,7 @@ namespace vofod
 
     /* findCloseFarClusters() method //{ */
     // separates clusters to those which are closer and further than a threshold to a pointcloud
-    std::pair<std::vector<pcl::PointIndices::ConstPtr>, std::vector<pcl::PointIndices::ConstPtr>> findCloseFarClusters(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices>& clusters_indices)
+    std::pair<std::vector<pcl::PointIndices::ConstPtr>, std::vector<pcl::PointIndices::ConstPtr>> findCloseFarClusters(const pc_XYZI_t::ConstPtr cloud, const std::vector<pcl::PointIndices>& clusters_indices)
     {
       std::vector<pcl::PointIndices::ConstPtr> close_clusters_indices;
       std::vector<pcl::PointIndices::ConstPtr> far_clusters_indices;
@@ -808,14 +808,15 @@ namespace vofod
     //}
 
     /* extractClustersPoints() method //{ */
-    pc_XYZR_t::Ptr extractClustersPoints(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices)
+    template <typename Point>
+    typename pcl::PointCloud<Point>::Ptr extractClustersPoints(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices)
     {
       auto indices_total = boost::make_shared<pcl::PointIndices>();
       for (const auto& idcs : clusters_indices)
         indices_total->indices.insert(std::end(indices_total->indices), std::begin(idcs->indices), std::end(idcs->indices));
 
-      auto ret = boost::make_shared<pc_XYZR_t>();
-      pcl::ExtractIndices<pt_XYZR_t> ei;
+      auto ret = boost::make_shared<pcl::PointCloud<Point>>();
+      pcl::ExtractIndices<Point> ei;
       ei.setInputCloud(cloud);
       ei.setIndices(indices_total);
       ei.filter(*ret);
@@ -825,7 +826,7 @@ namespace vofod
     //}
 
     /* updateVMaps() method //{ */
-    inline void updateVoxel(const pt_XYZR_t& pt, const float vmap_score, const float vflags)
+    inline void updateVoxel(const pt_XYZI_t& pt, const float vmap_score, const float vflags)
     {
       const auto [xc, yc, zc] = m_voxel_map.coordToIdx(pt.x, pt.y, pt.z);
       /* if (!m_voxel_map.inLimitsIdx(xc, yc, zc)) */
@@ -839,7 +840,8 @@ namespace vofod
 
       auto& mapval = m_voxel_map.atIdx(xc, yc, zc);
       // pt.range is the weight of the point (how many times it should be applied)
-      const float w = 1.0f/static_cast<float>(1lu << std::clamp(pt.range, 0u, 63u));
+      /* const float w = 1.0f/static_cast<float>(1lu << std::clamp(pt.range, 0u, 63u)); */
+      const float w = 1.0f/std::pow(2.0f, pt.intensity);
       /* if (w < 0.0f || (1.0f-w) < 0.0f) */
       /*   ROS_ERROR("[VoFOD]: Invalid weight: w1 = %.2f, w2 = %.2f!", w, (1.0f-w)); */
       mapval = w*mapval + (1.0f-w)*vmap_score;
@@ -847,7 +849,8 @@ namespace vofod
       m_voxel_flags.atIdx(xc, yc, zc) = vflags;
     }
 
-    void updateVMaps(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices, const float vmap_score, const float vflags)
+    template <typename Point>
+    void updateVMaps(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices, const float vmap_score, const float vflags)
     {
       for (const auto& cluster_indices : clusters_indices)
       {
@@ -859,7 +862,8 @@ namespace vofod
       }
     }
 
-    void updateVMaps(const pc_XYZR_t::ConstPtr cloud, const float vmap_score, const float vflags)
+    template <typename Point>
+    void updateVMaps(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const float vmap_score, const float vflags)
     {
       for (const auto& pt : *cloud)
         updateVoxel(pt, vmap_score, vflags);
@@ -867,7 +871,8 @@ namespace vofod
     //}
 
     /* classifyClusters() method //{ */
-    std::vector<cluster_t> classifyClusters(const pc_XYZR_t::ConstPtr cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices, const Eigen::Affine3f& s2w_tf)
+    template <typename Point>
+    std::vector<cluster_t> classifyClusters(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices, const Eigen::Affine3f& s2w_tf)
     {
       std::vector<cluster_t> clusters;
       clusters.reserve(clusters_indices.size());
@@ -1062,7 +1067,7 @@ namespace vofod
       
       if (m_pub_background_clusters_pc.getNumSubscribers() > 0)
       {
-        pc_XYZR_t::Ptr background_cloud = extractClustersPoints(cloud_weighted, close_clusters_indices);
+        auto background_cloud = extractClustersPoints(cloud_weighted, close_clusters_indices);
         pcl::transformPointCloud(*background_cloud, *background_cloud, s2w_tf.inverse());
         background_cloud->header = cloud->header;
         m_pub_background_clusters_pc.publish(background_cloud);
@@ -1616,7 +1621,7 @@ namespace vofod
         // update the main voxel map using values from the helper voxelmap
         const float ray_update_score = m_drmgr_ptr->config.voxel_map__scores__ray;        // this is the value that voxels will converge to if consistently raycasted as empty
         const float ray_update_weight = m_drmgr_ptr->config.raycast__weight_coefficient;  // used to slow down or speed up the convergence
-        const float voxel_diag = std::sqrt(3)*m_vmap_voxel_size;
+        const float voxel_diag = std::sqrt(3.0f)*m_vmap_voxel_size;
         const float weighting_factor = ray_update_weight/voxel_diag;
         m_voxel_flags.forEachIdx(
               [detection_its_diff, ray_update_score, weighting_factor, this](VoxelMap::data_t& flag, const VoxelMap::idx_t xc, const VoxelMap::idx_t yc, const VoxelMap::idx_t zc)
@@ -1709,20 +1714,21 @@ namespace vofod
     //}
 
     /* classify_cluster() method //{ */
-    cluster_t classify_cluster(const pc_XYZR_t::ConstPtr& cloud, const pcl::PointIndices::ConstPtr& cluster_indices, const Eigen::Affine3f& s2w_tf)
+    template <typename Point>
+    cluster_t classify_cluster(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const pcl::PointIndices::ConstPtr& cluster_indices, const Eigen::Affine3f& s2w_tf)
     {
       // TODO: deal with voxels at the edge of the map separately (should never be classified as detections)
       cluster_t ret;
       ret.cclass = cluster_class_t::invalid;
 
       {
-        pcl::MomentOfInertiaEstimation<pt_XYZR_t> moie;
+        pcl::MomentOfInertiaEstimation<Point> moie;
         moie.setInputCloud(cloud);
         moie.setIndices(cluster_indices);
         moie.compute();
-        pt_XYZR_t min_pt;
-        pt_XYZR_t max_pt;
-        pt_XYZR_t ctr_pt;
+        Point min_pt;
+        Point max_pt;
+        Point ctr_pt;
 
         // get the axis-aligned bounding box
         moie.getAABB(min_pt, max_pt);
@@ -1757,7 +1763,7 @@ namespace vofod
       // if ground is available, check floatingness of the cluster (otherwise it cannot be decided)
       if (m_background_pts_sufficient && m_sure_background_sufficient)
       {
-        const int max_explore_voxel_size = (ret.obb_size + m_drmgr_ptr->config.classification__max_explore_distance)/m_vmap_voxel_size;
+        const int max_explore_voxel_size = static_cast<int>(std::ceil((ret.obb_size + m_drmgr_ptr->config.classification__max_explore_distance)/m_vmap_voxel_size));
         // check if every point in the cluster is floating (all points in a 26-neighborhood
         // are known to be empty -> their value is <= m_drmgr_ptr->config.voxel_map__thresholds__frontiers)
         for (const auto idx : cluster_indices->indices)
@@ -1785,7 +1791,6 @@ namespace vofod
       {
         is_floating = false;
       }
-
 
       if (is_floating)
         ret.cclass = cluster_class_t::mav;

@@ -11,6 +11,8 @@ namespace vofod
   using pc_XYZ_t = pcl::PointCloud<pt_XYZ_t>;
   using pt_XYZR_t = vofod::PointXYZR;
   using pc_XYZR_t = pcl::PointCloud<pt_XYZR_t>;
+  using pt_XYZI_t = pcl::PointXYZI;
+  using pc_XYZI_t = pcl::PointCloud<pt_XYZI_t>;
   using pt_XYZRI_t = vofod::PointXYZRI;
   using pc_XYZRI_t = pcl::PointCloud<pt_XYZRI_t>;
   using pt_XYZt_t = pcl::PointXYZI;

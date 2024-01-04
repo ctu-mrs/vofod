@@ -2,13 +2,14 @@
 
 #include <pcl/filters/voxel_grid.h>
 #include "vofod/point_types.h"
+#include "vofod/types.h"
 
 namespace vofod
 {
   class VoxelGridWeighted : public pcl::VoxelGrid<ouster_ros::Point>
   {
     using PointT = ouster_ros::Point;
-    using PointCloudOut = pcl::PointCloud<vofod::PointXYZR>;
+    using PointCloudOut = pc_XYZI_t;
     void filterImpl(PointCloudOut& output);
   public:
     VoxelGridWeighted() {filter_name_ = "VoxelGridWeighted";}

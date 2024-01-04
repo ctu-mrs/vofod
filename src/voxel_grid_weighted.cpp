@@ -178,11 +178,11 @@ namespace vofod
       const float x = (static_cast<float>(cpidx.ijk0) + 0.5f) * leaf_size_[0] + offset[0];
       const float y = (static_cast<float>(cpidx.ijk1) + 0.5f) * leaf_size_[1] + offset[1];
       const float z = (static_cast<float>(cpidx.ijk2) + 0.5f) * leaf_size_[2] + offset[2];
-      const uint32_t weight = static_cast<uint32_t>(last_index - first_index);
+      const float weight = static_cast<float>(last_index - first_index);
       output.points[index].x = x;
       output.points[index].y = y;
       output.points[index].z = z;
-      output.points[index].range = weight;
+      output.points[index].intensity = weight;
 
       ++index;
     }
