@@ -7,7 +7,7 @@ ground_points_min_weight: 1 # measurements
 ground_points_max_distance: 1.5 # metres
 # at least the number of voxels in the xy plane times this ratio of points have to be considered background
 # before classification may begin
-background_sufficient_points_ratio: 0.15
+background_sufficient_points: 50
 
 input:
   range_filter_length: 9

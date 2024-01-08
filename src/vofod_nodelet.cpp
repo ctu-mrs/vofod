@@ -65,7 +65,6 @@
 #include <vofod/Status.h>
 #include <vofod/ProfilingInfo.h>
 
-#include "vofod/voxel_map.h"
 #include "vofod/voxel_grid_weighted.h"
 #include "vofod/voxel_grid_counted.h"
 #include "vofod/pc_loader.h"
@@ -119,7 +118,6 @@ namespace vofod
     aabb_t aabb;
     obb_t obb;
     float obb_size = std::numeric_limits<float>::quiet_NaN();
-    VoxelMap submap;
     pc_XYZI_t::ConstPtr pc;
     pcl::PointIndices::ConstPtr pc_indices;
   };
@@ -179,8 +177,8 @@ namespace vofod
       pl.loadParam("pointcloud_threads", m_n_pc_threads);
       pl.loadParam("throttle_period", m_throttle_period);
 
-      pl.loadParam("input/range_filter_length", m_range_filter_length);
-      m_ranges_buffer.reserve(m_range_filter_length);
+      pl.loadParam("input/range_filter_length", m_ranges_buffer_len);
+      m_ranges_buffer.reserve(m_ranges_buffer_len);
 
       const auto static_cloud_filename = pl.loadParam2<std::string>("static_cloud_filename", "");
 
@@ -215,31 +213,17 @@ namespace vofod
       pl.loadParam("exclude_box/size/z", m_exclude_box_size_z);
       m_exclude_box_offset_z = m_exclude_box_offset_z + m_exclude_box_size_z / 2.0f;
 
-      pl.loadParam("operation_area/offset/x", m_oparea_offset_x);
-      pl.loadParam("operation_area/offset/y", m_oparea_offset_y);
-      pl.loadParam("operation_area/offset/z", m_oparea_offset_z);
-      pl.loadParam("operation_area/size/x", m_oparea_size_x);
-      pl.loadParam("operation_area/size/y", m_oparea_size_y);
-      pl.loadParam("operation_area/size/z", m_oparea_size_z);
-      m_oparea_offset_z = m_oparea_offset_z + m_oparea_size_z / 2.0f;
-
       Eigen::Affine3f apriori_map_tf = Eigen::Affine3f::Identity();
       {
         const vec3_t translation(pl.loadParam2<double>("apriori_map/tf/x"), pl.loadParam2<double>("apriori_map/tf/y"), pl.loadParam2<double>("apriori_map/tf/z"));
         const Eigen::Matrix3f rotation = anax_t(pl.loadParam2<double>("apriori_map/tf/yaw")/180.0*M_PI, vec3_t::UnitZ()).toRotationMatrix();
 
-        const vec3_t sim_correction(pl.loadParam2<double>("apriori_map/sim_correction/x", 0), pl.loadParam2<double>("apriori_map/sim_correction/y", 0), pl.loadParam2<double>("apriori_map/sim_correction/z", 0));
-        m_oparea_offset_x += sim_correction.x();
-        m_oparea_offset_y += sim_correction.y();
-        m_oparea_offset_z += sim_correction.z();
-
         apriori_map_tf.rotate(rotation);
-        apriori_map_tf.translate(translation + sim_correction);
+        apriori_map_tf.translate(translation);
       }
 
-      const auto background_sufficient_points_ratio = pl.loadParam2<float>("background_sufficient_points_ratio");
-      const auto n_voxels_xy = m_oparea_size_x/m_vmap_voxel_size * m_oparea_size_y/m_vmap_voxel_size;
-      m_background_min_sufficient_pts = n_voxels_xy*background_sufficient_points_ratio;
+      const auto background_min_sufficient_pts = pl.loadParam2<int>("background_sufficient_points");
+      m_background_min_sufficient_pts = std::max(background_min_sufficient_pts, 0);
 
       // CHECK LOADING STATUS
       if (!pl.loadedSuccessfully())
@@ -257,7 +241,7 @@ namespace vofod
       shopts.no_message_timeout = ros::Duration(5.0);
       // Initialize subscribers
       mrs_lib::construct_object(m_sh_pc, shopts, "pointcloud");
-      mrs_lib::construct_object(m_sh_rangefinder, shopts, "height_rangefinder");
+      mrs_lib::construct_object(m_sh_rangefinder, shopts, "height_rangefinder", &VoFOD::range_callback, this);
       mrs_lib::construct_object(m_sh_tsdf_layer, shopts, "tsdf_layer_in", &VoFOD::tsdf_layer_callback, this);
 
       // Initialize publishers
@@ -267,7 +251,6 @@ namespace vofod
       m_pub_background_pc = nh.advertise<sensor_msgs::PointCloud2>("background_pc", 1);
       m_pub_vmap = nh.advertise<visualization_msgs::Marker>("voxel_map", 1);
       m_pub_update_flags = nh.advertise<visualization_msgs::Marker>("update_flags", 1);
-      m_pub_oparea = nh.advertise<visualization_msgs::Marker>("operation_area", 1, true);
       m_pub_apriori_pc = nh.advertise<sensor_msgs::PointCloud2>("apriori_pc", 1, true);
       m_pub_background_clusters_pc = nh.advertise<sensor_msgs::PointCloud2>("background_clusters_pc", 1);
       m_pub_freecloud_pc = nh.advertise<sensor_msgs::PointCloud2>("freecloud_pc", 1);
@@ -354,9 +337,7 @@ namespace vofod
           std::swap(apriori_cloud, tmp_cloud);
           NODELET_INFO("Downsampled the static cloud to %lu points.", apriori_cloud->size());
 
-          for (const auto& pt : *apriori_cloud)
-            if (m_voxel_map.inLimits(pt.x, pt.y, pt.z))
-              m_voxel_map.at(pt.x, pt.y, pt.z) = std::numeric_limits<float>::infinity();
+          // TODO
 
           m_sure_background_sufficient = true;
           m_background_pts_sufficient = true;
@@ -594,68 +575,6 @@ namespace vofod
   private:
     /* processMsg() method overloads //{ */
 
-    /* overload for the sensor_msgs::Range message type //{ */
-
-    void processMsg(const sensor_msgs::Range::ConstPtr msg)
-    {
-      mrs_lib::ScopeTimer stimer("range", {"msg stamp", msg->header.stamp}, m_throttle_period);
-      // check validity of the measured range
-      if (msg->range <= msg->min_range && msg->range >= msg->max_range)
-        return;
-
-      const vec3_t range_pt(msg->range, 0.0, 0.0);
-
-      /* transform the measured point to the static world frame //{ */
-
-      Eigen::Affine3d s2w_tf;
-      bool tf_ok = get_transform_to_world(msg->header.frame_id, msg->header.stamp, s2w_tf);
-      if (!tf_ok)
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[VoFOD]: Could not transform point to global, skipping.");
-        return;
-      }
-      const vec3_t pt_tfd = s2w_tf.cast<float>() * range_pt;
-
-      //}
-
-      if (!m_voxel_map.inLimits(pt_tfd.x(), pt_tfd.y(), pt_tfd.z()))
-      {
-        NODELET_ERROR_THROTTLE(0.5, "[VoFOD]: Range measurement is outside of the operational area! Cannot update ground map.");
-        return;
-      }
-
-      m_ranges_buffer.push_back(msg->range);
-      if ((int)m_ranges_buffer.size() >= m_range_filter_length)
-      {
-        std::sort(std::begin(m_ranges_buffer), std::end(m_ranges_buffer));
-        const double median_range = m_ranges_buffer.at(m_ranges_buffer.size()/2);
-        const vec3_t pt_sensor_frame = median_range * vec3_t::UnitX();;
-        m_ranges_buffer.clear();
-
-        // publish the point as a pointcloud
-        pt_XYZ_t pt;
-        pt.getVector3fMap() = pt_sensor_frame;
-        pc_XYZ_t range_pc;
-        range_pc.push_back(pt);
-        sensor_msgs::PointCloud2 range_pc_msg;
-        pcl::toROSMsg(range_pc, range_pc_msg);
-        range_pc_msg.header = msg->header;
-        m_pub_rangefinder_pc.publish(range_pc_msg);
-        NODELET_INFO_THROTTLE(0.5, "[VoFOD]: Publishing range measurement as pointcloud.");
-      }
-
-      {
-        std::scoped_lock lck(m_voxels_mtx);
-        auto& mapval = m_voxel_map.at(pt_tfd.x(), pt_tfd.y(), pt_tfd.z());
-        mapval = (mapval + m_drmgr_ptr->config.voxel_map__scores__point) / 2.0;
-        NODELET_INFO_THROTTLE(0.5, "[VoFOD]: Updating ground map using range measurement.");
-      }
-    }
-
-    //}
-
-    /* overload for the pc_XYZ_t message type //{ */
-
     /* filterAndTransform() method //{ */
     
     pc_XYZI_t::Ptr filterAndTransform(const pc_t::ConstPtr cloud, const Eigen::Affine3f& s2w_tf)
@@ -680,30 +599,28 @@ namespace vofod
       pcl::transformPointCloud(*cloud_filtered, *cloud_filtered, s2w_tf);
       cloud_filtered->header.frame_id = m_world_frame_id;
     
-      /* filter by cropping points outside a box, relative to the global origin, (outside the operation area) //{ */
-      {
-        const Eigen::Vector4f box_point1(m_oparea_offset_x + m_oparea_size_x / 2, m_oparea_offset_y + m_oparea_size_y / 2,
-                                         m_oparea_offset_z + m_oparea_size_z / 2, 1);
-        const Eigen::Vector4f box_point2(m_oparea_offset_x - m_oparea_size_x / 2, m_oparea_offset_y - m_oparea_size_y / 2,
-                                         m_oparea_offset_z - m_oparea_size_z / 2, 1);
-        pcl::CropBox<pt_t> cb;
-        cb.setMax(box_point1);
-        cb.setMin(box_point2);
-        cb.setInputCloud(cloud_filtered);
-        cb.setNegative(false);
-        cb.filter(*cloud_filtered);
-      }
-      //}
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Input PC after CropBox 2: " << cloud_filtered->size() << " points");
-    
       auto cloud_weighted = boost::make_shared<pcl::PointCloud<pt_XYZI_t>>();
       if (m_drmgr_ptr->config.input__voxel_grid_filter)
       {
+        // get the map offset and voxel size
+        vec4_t map_align_point = vec4_t::Zero();
+        const auto voxel_size = m_tsdf_map->voxel_size();
+        {
+          std::scoped_lock lck(m_tsdf_map_mtx);
+          const auto& layer = m_tsdf_map->getTsdfLayer();
+          if (layer.getNumberOfAllocatedBlocks() > 0)
+          {
+            voxblox::BlockIndexList bil;
+            layer.getAllAllocatedBlocks(&bil);
+            const auto& block0 = layer.getBlockByIndex(bil[0]);
+            map_align_point.head<3>() = block0.origin();
+          }
+        }
+
         VoxelGridWeighted vgw;
         vgw.setInputCloud(cloud_filtered);
-        vgw.setLeafSize(m_vmap_voxel_size, m_vmap_voxel_size, m_vmap_voxel_size);
-        const auto [align_x, align_y, align_z] = m_voxel_map.idxToCoord(0, 0, 0);
-        vgw.setVoxelAlign({align_x, align_y, align_z, 0.0f});
+        vgw.setLeafSize(voxel_size, voxel_size, voxel_size);
+        vgw.setVoxelAlign(map_align_point);
         vgw.filter(*cloud_weighted);
         cloud_weighted->header.frame_id = cloud_filtered->header.frame_id;
       }
@@ -752,6 +669,27 @@ namespace vofod
     }
     //}
 
+    /* foreach_voxel() method //{ */
+    void foreach_voxel(const voxblox::Layer<voxblox::TsdfVoxel>& layer, std::function<void(const voxblox::TsdfVoxel&)> fn)
+    {
+      const auto n_blocks = layer.getNumberOfAllocatedBlocks();
+      if (n_blocks > 0)
+      {
+        voxblox::BlockIndexList block_indices;
+        layer.getAllAllocatedBlocks(&block_indices);
+        for (size_t bit = 0; bit < n_blocks; bit++)
+        {
+          const auto& block = layer.getBlockByIndex(block_indices[bit]);
+          for (size_t vit = 0; vit < block.num_voxels(); vit++)
+          {
+            const auto& voxel = block.getVoxelByLinearIndex(vit);
+            fn(voxel);
+          }
+        }
+      }
+    }
+    //}
+
     /* findCloseFarClusters() method //{ */
     // separates clusters to those which are closer and further than a threshold to a pointcloud
     std::pair<std::vector<pcl::PointIndices::ConstPtr>, std::vector<pcl::PointIndices::ConstPtr>> findCloseFarClusters(const pc_XYZI_t::ConstPtr cloud, const std::vector<pcl::PointIndices>& clusters_indices)
@@ -760,14 +698,20 @@ namespace vofod
       std::vector<pcl::PointIndices::ConstPtr> far_clusters_indices;
       close_clusters_indices.reserve(clusters_indices.size());
       far_clusters_indices.reserve(clusters_indices.size());
+      std::scoped_lock lck(m_tsdf_map_mtx);
+      const auto& layer = m_tsdf_map->getTsdfLayer();
+
       const auto min_weight = m_drmgr_ptr->config.ground_points_min_weight;
       const auto max_dist = m_drmgr_ptr->config.ground_points_max_distance;
-      const auto threshold_new_obstacles = m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles;
+      /* const auto threshold_new_obstacles = m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles; */
     
-      std::lock_guard lck(m_voxels_mtx);
-
       // check the number of voxels, classified as background (used to decide whether to run detailed cluster classification later)
-      const uint64_t n_bg_pts = m_voxel_map.nVoxelsOver(threshold_new_obstacles);
+      uint64_t n_bg_pts = 0;
+      foreach_voxel(layer, [&n_bg_pts, min_weight, max_dist](const voxblox::TsdfVoxel& vox)
+          {
+            if (std::abs(vox.distance) < max_dist && vox.weight > min_weight)
+              n_bg_pts++;
+          });
       if (n_bg_pts > m_background_min_sufficient_pts)
       {
         if (!m_background_pts_sufficient)
@@ -786,10 +730,10 @@ namespace vofod
         for (const auto& idx : cluster_indices.indices)
         {
           const vec3_t& pt = cloud->at(idx).getVector3fMap();
-          const auto voxel = m_tsdf_map->getTsdfLayer().getVoxelPtrByCoordinates(pt);
+          const auto voxel = layer.getVoxelPtrByCoordinates(pt);
           // if a neighbor within the 'm_drmgr_ptr->config.ground_points_max_distance' radius was found, this cluster will be classified as a block of ground
           /* if (m_voxel_map.hasCloseTo(pt.x, pt.y, pt.z, max_dist, threshold_new_obstacles)) */
-          if (voxel != nullptr && voxel->weight > min_weight && std::abs(voxel->distance) < max_dist)
+          if (voxel != nullptr && voxel->weight >= min_weight && std::abs(voxel->distance) <= max_dist)
           {
             // set the corresponding local flag
             is_close = true;
@@ -822,51 +766,6 @@ namespace vofod
       ei.filter(*ret);
       ret->header.frame_id = cloud->header.frame_id;
       return ret;
-    }
-    //}
-
-    /* updateVMaps() method //{ */
-    inline void updateVoxel(const pt_XYZI_t& pt, const float vmap_score, const float vflags)
-    {
-      const auto [xc, yc, zc] = m_voxel_map.coordToIdx(pt.x, pt.y, pt.z);
-      /* if (!m_voxel_map.inLimitsIdx(xc, yc, zc)) */
-      /* { */
-      /*   const Eigen::Vector3f max_pt(m_oparea_offset_x + m_oparea_size_x / 2, m_oparea_offset_y + m_oparea_size_y / 2, */
-      /*                                m_oparea_offset_z + m_oparea_size_z / 2); */
-      /*   const Eigen::Vector3f min_pt(m_oparea_offset_x - m_oparea_size_x / 2, m_oparea_offset_y - m_oparea_size_y / 2, */
-      /*                                m_oparea_offset_z - m_oparea_size_z / 2); */
-      /*   ROS_ERROR("[VoFOD]: POINT NOT WITHIN LIMITS! [%.2f, %.2f, %.2f] (indices: [%d, %d, %d]), oparea from [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f]", pt.x, pt.y, pt.z, xc, yc, zc, min_pt.x(), min_pt.y(), min_pt.z(), max_pt.x(), max_pt.y(), max_pt.z()); */
-      /* } */
-
-      auto& mapval = m_voxel_map.atIdx(xc, yc, zc);
-      // pt.range is the weight of the point (how many times it should be applied)
-      /* const float w = 1.0f/static_cast<float>(1lu << std::clamp(pt.range, 0u, 63u)); */
-      const float w = 1.0f/std::pow(2.0f, pt.intensity);
-      /* if (w < 0.0f || (1.0f-w) < 0.0f) */
-      /*   ROS_ERROR("[VoFOD]: Invalid weight: w1 = %.2f, w2 = %.2f!", w, (1.0f-w)); */
-      mapval = w*mapval + (1.0f-w)*vmap_score;
-      // set the flag, indicating that this voxel was updated during this turn
-      m_voxel_flags.atIdx(xc, yc, zc) = vflags;
-    }
-
-    template <typename Point>
-    void updateVMaps(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const std::vector<pcl::PointIndices::ConstPtr>& clusters_indices, const float vmap_score, const float vflags)
-    {
-      for (const auto& cluster_indices : clusters_indices)
-      {
-        for (const auto idx : cluster_indices->indices)
-        {
-          const auto pt = cloud->at(idx);
-          updateVoxel(pt, vmap_score, vflags);
-        }
-      }
-    }
-
-    template <typename Point>
-    void updateVMaps(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const float vmap_score, const float vflags)
-    {
-      for (const auto& pt : *cloud)
-        updateVoxel(pt, vmap_score, vflags);
     }
     //}
 
@@ -903,23 +802,8 @@ namespace vofod
         det.obb = cluster.obb;
         det.covariance = std::sqrt(det_dist)*m_drmgr_ptr->config.output__position_sigma*mat3_t::Identity();
 
-        auto submap = m_voxel_map.getSubmapCopy(det.aabb.min_pt, det.aabb.max_pt, 2);
-        // set the cluster points to air to ignore them in the score
-        for (const auto& idx : cluster.pc_indices->indices)
-        {
-          const auto pt = cluster.pc->at(idx);
-          submap.at(pt.x, pt.y, pt.z) = m_drmgr_ptr->config.voxel_map__scores__ray; // consider points from the cluster as free air
-        }
-
-        // calculate the total uncertainty score as the score of voxels in the neighborhood weighted by the number of cluster points
-        double uncertainty_score = 0.0f;
-        for (auto& val : submap)
-          uncertainty_score += 1.0 - val/m_drmgr_ptr->config.voxel_map__scores__ray;
-        // divide the weight by the number of 
-        const auto n_pts = cluster.pc_indices->indices.size();
-        uncertainty_score /= n_pts;
         // confidence is then an inverse exponential of the weight
-        det.confidence = static_cast<float>(1.0/std::exp(uncertainty_score));
+        det.confidence = static_cast<float>(1.0f);
 
         const double vray_res = m_sensor_vfov/static_cast<double>(m_sensor_vrays);
         const double hray_res = 2*M_PI/static_cast<double>(m_sensor_hrays);
@@ -991,26 +875,6 @@ namespace vofod
       const auto [close_clusters_indices, far_clusters_indices] = findCloseFarClusters(cloud_weighted, clusters_indices);
       stimer.checkpoint("close X far");
 
-      {
-        // update the voxel map and flags map
-        // prepare the map of flags
-        std::scoped_lock lck(m_voxels_mtx);
-        stimer.checkpoint("vmap lock");
-        // add points from the current scan, which were classified as background, to the voxelmaps
-        updateVMaps(cloud_weighted, close_clusters_indices, m_drmgr_ptr->config.voxel_map__scores__point, m_vflags_point);
-        // go through the detection candidates and mark the corresponding voxels in voxel flags as unknown
-        updateVMaps(cloud_weighted, far_clusters_indices, m_drmgr_ptr->config.voxel_map__scores__unknown, m_vflags_unknown);
-        m_detection_its++;
-      }
-      m_detection_cv.notify_one();
-      if (!m_raycast_running)
-      {
-        m_raycast_running = true;
-        m_raycast_thread = std::thread(&VoFOD::raycast_cloud, this, cloud, s2w_tf);
-        m_raycast_thread.detach();
-      }
-      stimer.checkpoint("vmap update");
-
       // classify the clusters using the updated data
       const std::vector<cluster_t> clusters = classifyClusters(cloud_weighted, far_clusters_indices, s2w_tf);
       // filter out only the valid detections
@@ -1041,42 +905,21 @@ namespace vofod
         m_pub_detections.publish(msg);
       }
 
-      /* Publish debug stuff //{ */
-      
-      if (m_pub_detections_mks.getNumSubscribers() > 0)
-        m_pub_detections_mks.publish(clusters_visualization(clusters, header));
-      
-      if (m_pub_frontiers_mks.getNumSubscribers() > 0)
-        m_pub_frontiers_mks.publish(frontier_visualization(clusters, header));
-      
-      if (m_pub_sure_air_pc.getNumSubscribers() > 0)
-      {
-        pc_XYZt_t::Ptr sure_air = m_voxel_map.voxelsAsPC(m_drmgr_ptr->config.voxel_map__thresholds__frontiers, false);
-        sure_air->header.stamp = cloud->header.stamp;
-        sure_air->header.frame_id = m_world_frame_id;
-        m_pub_sure_air_pc.publish(sure_air);
-      }
-
-      if (m_pub_background_pc.getNumSubscribers() > 0)
-      {
-        pc_XYZt_t::Ptr bg_cloud = m_voxel_map.voxelsAsPC(m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles, true);
-        bg_cloud->header.stamp = cloud->header.stamp;
-        bg_cloud->header.frame_id = m_world_frame_id;
-        m_pub_background_pc.publish(bg_cloud);
-      }
+      /* Publish stuff for mapping //{ */
       
       if (m_pub_background_clusters_pc.getNumSubscribers() > 0)
       {
         auto background_cloud = extractClustersPoints(cloud_weighted, close_clusters_indices);
         pcl::transformPointCloud(*background_cloud, *background_cloud, s2w_tf.inverse());
         background_cloud->header = cloud->header;
+        NODELET_INFO_THROTTLE(1.0, "[VoFOD]: Publishing pointcloud of clusters classified as obstacles with %lu points", background_cloud->size());
         m_pub_background_clusters_pc.publish(background_cloud);
       }
-
+      
       if (m_pub_freecloud_pc.getNumSubscribers() > 0)
       {
         const float max_dist = (float)m_drmgr_ptr->config.raycast__max_distance;
-        auto freecloud = boost::make_shared<pc_t>();
+        auto freecloud = boost::make_shared<pc_XYZ_t>();
         freecloud->reserve(cloud->size());
         for (int row = 0; row < (int)cloud->height; row++)
         {
@@ -1088,28 +931,27 @@ namespace vofod
             {
               const vec3_t dir = m_sensor_xyz_lut.directions.col(idx);
               const vec3_t npt_eig = max_dist * dir;
-              pt_t npt;
+              pt_XYZ_t npt;
               npt.getVector3fMap() = npt_eig;
               freecloud->push_back(npt);
             }
           }
         }
         freecloud->header = cloud->header;
+        NODELET_INFO_THROTTLE(1.0, "[VoFOD]: Publishing freespace cloud with %lu points", freecloud->size());
         m_pub_freecloud_pc.publish(freecloud);
       }
       
-      if (m_pub_vmap.getNumSubscribers() > 0)
-      {
-        m_voxel_map.clearVisualizationThresholds();
-        m_voxel_map.addVisualizationThreshold(m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles, m_vmap_color_new_obstacles);
-        m_voxel_map.addVisualizationThreshold(m_drmgr_ptr->config.voxel_map__thresholds__sure_obstacles, m_vmap_color_sure_obstacles);
-        m_voxel_map.addVisualizationThreshold(m_drmgr_ptr->config.voxel_map__thresholds__apriori_map, m_vmap_color_apriori_map);
-        m_pub_vmap.publish(m_voxel_map.visualization(header));
-      }
-      
-      if (m_pub_update_flags.getNumSubscribers() > 0)
-        m_pub_update_flags.publish(m_voxel_flags.visualization(header));
+      //}
 
+      /* Publish debug stuff //{ */
+      
+      if (m_pub_detections_mks.getNumSubscribers() > 0)
+        m_pub_detections_mks.publish(clusters_visualization(clusters, header));
+      
+      if (m_pub_frontiers_mks.getNumSubscribers() > 0)
+        m_pub_frontiers_mks.publish(frontier_visualization(clusters, header));
+      
       if (m_pub_detections_dbg.getNumSubscribers() > 0)
       {
         mrs_msgs::PoseWithCovarianceArrayStamped msg;
@@ -1176,19 +1018,6 @@ namespace vofod
 
     //}
 
-    //}
-
-    void rangefinder_loop()
-    {
-      const ros::WallDuration timeout(1.0/10.0);
-      while (ros::ok())
-      {
-        const auto msg_ptr = m_sh_rangefinder.waitForNew(timeout);
-        if (msg_ptr)
-          processMsg(msg_ptr);
-      }
-    }
-
     void pointcloud_loop(const int thread_n)
     {
       const ros::WallDuration timeout(1.0/10.0);
@@ -1197,178 +1026,6 @@ namespace vofod
         const auto msg_ptr = m_sh_pc.waitForNew(timeout);
         if (msg_ptr)
           processMsg(msg_ptr, thread_n);
-      }
-    }
-
-    /* updateSeparatedBGClusters() method //{ */
-    // separates clusters to those which are closer and further than a threshold to a pointcloud
-    void updateSeparatedBGClusters(VoxelMap& local_vmap)
-    {
-      if (m_drmgr_ptr->config.sepclusters__pause)
-      {
-        NODELET_WARN_THROTTLE(1.0, "[SepClusters]: Separate background clusters removal disabled, skipping.");
-        return;
-      }
-      publish_profile_start(profile_routines_t::sepbgclusters);
-      const int start_detection_its = m_detection_its;
-      mrs_lib::ScopeTimer tim("sep bg clusters", m_throttle_period);
-
-      // prepare some parameters
-      const auto max_dist = m_drmgr_ptr->config.sepclusters__max_bg_distance;
-      const auto threshold_new_obstacles = m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles;
-      const auto threshold_sure_obstacles = m_drmgr_ptr->config.voxel_map__thresholds__sure_obstacles;
-      const unsigned n_pts_sure_cluster = m_drmgr_ptr->config.sepclusters__min_sure_points;
-      const VoxelMap::coord_t max_dist_idx = max_dist/m_vmap_voxel_size;
-      const VoxelMap::idx_t max_voxel_dist = std::ceil(max_dist_idx);
-    
-      {
-        std::lock_guard lck(m_voxels_mtx);
-        tim.checkpoint("mutex lock1");
-        local_vmap.copyDataIdx(m_voxel_map);
-        tim.checkpoint("vmap copy");
-      }
-
-      // convert the voxelmap to a pointcloud
-      VoxelMap::pc_t::Ptr vmap_pc_raw = local_vmap.voxelsAsVoxelPC(threshold_new_obstacles);
-      tim.checkpoint("pc create");
-      if (vmap_pc_raw->empty())
-      {
-        NODELET_WARN_THROTTLE(1.0, "[SepClusters]: Voxelmap pointcloud is empty, skipping.");
-        return;
-      }
-
-      // downsample the voxel pointcloud to reduce clustering time
-      const float lsz = static_cast<float>(std::max(max_voxel_dist - 1, 0));
-      auto vmap_pc_ds = boost::make_shared<vofod::VoxelGridCounted::PointCloudOut>();
-      vofod::VoxelGridCounted vgc(threshold_sure_obstacles);
-      vgc.setInputCloud(vmap_pc_raw);
-      vgc.setLeafSize(lsz, lsz, lsz);
-      vgc.filter(*vmap_pc_ds);
-      tim.checkpoint("downsample");
-
-      // clusterize voxels (represented as points), classified as background
-      const std::vector<pcl::PointIndices> clusters_indices = clusterCloud(vmap_pc_ds, max_voxel_dist);
-      tim.checkpoint("clustering");
-
-      // find the number of sure voxels in each cluster
-      std::vector<size_t> clusters_n_sure;
-      clusters_n_sure.reserve(clusters_indices.size());
-      for (const auto& cluster_indices : clusters_indices)
-      {
-        const auto cur_n_sure = std::accumulate(std::begin(cluster_indices.indices), std::end(cluster_indices.indices), 0,
-            [&vmap_pc_ds](const auto acc, const auto idx) {return acc + vmap_pc_ds->points[idx].range;}
-          );
-        clusters_n_sure.push_back(cur_n_sure);
-      }
-      vmap_pc_ds->header.frame_id = m_world_frame_id;
-      pcl_conversions::toPCL(ros::Time::now(), vmap_pc_ds->header.stamp);
-      m_pub_sepclusters_cluster_pc.publish(vmap_pc_ds);
-    
-      // check if a sufficient number of sure background cluster was detected
-      const size_t n_clusters = clusters_n_sure.size();
-      const size_t n_sure_clusters = std::count_if(std::begin(clusters_n_sure), std::end(clusters_n_sure), [n_pts_sure_cluster](const auto a){return a >= n_pts_sure_cluster;});
-      NODELET_INFO_THROTTLE(1.0, "[SepClusters]: Found %lu background clusters, %lu unsure.", n_clusters, n_clusters-n_sure_clusters);
-      if (n_sure_clusters == 0)
-      {
-        // if not, disable classification and return
-        m_sure_background_sufficient = false;
-        const auto most_sure_voxels = *std::max_element(std::begin(clusters_n_sure), std::end(clusters_n_sure));
-        NODELET_WARN_STREAM_THROTTLE(1.0, "[SepClusters]: No sure background clusters detected yet (most sure voxels: " << most_sure_voxels << ", required: " << n_pts_sure_cluster << ")! Cluster classification is inactive.");
-        return;
-      }
-      else
-      {
-        // if yes, we can enable classification and update the other clusters
-        if (!m_sure_background_sufficient)
-          NODELET_INFO_THROTTLE(1.0, "[SepClusters]: Sure background cluster detected!");
-        m_sure_background_sufficient = true;
-      }
-      tim.checkpoint("surest score");
-
-      // update disconnected background clusters as unknown
-      std::lock_guard lck(m_voxels_mtx);
-      tim.checkpoint("mutex lock2");
-      const float detection_its_diff = std::max(m_detection_its - start_detection_its, 1); // has to be at least one!
-
-      const bool publish = m_pub_sepclusters_pc.getNumSubscribers() > 0;
-      pc_XYZR_t pc;
-      pc.header.frame_id = m_world_frame_id;
-      pcl_conversions::toPCL(ros::Time::now(), pc.header.stamp);
-
-      // generate relative indices to update for each downsampled voxel
-      const VoxelMap::vec3i_t from_inds(-max_voxel_dist, -max_voxel_dist, -max_voxel_dist);
-      const VoxelMap::vec3i_t to_inds(max_voxel_dist, max_voxel_dist, max_voxel_dist);
-      // setup mask of voxels in range for the for loop
-      std::vector<vec3i_t> index_offsets;
-      for (VoxelMap::idx_t x_it = from_inds.x(); x_it <= to_inds.x(); x_it++)
-      {
-        for (VoxelMap::idx_t y_it = from_inds.y(); y_it <= to_inds.y(); y_it++)
-        {
-          for (VoxelMap::idx_t z_it = from_inds.z(); z_it <= to_inds.z(); z_it++)
-          {
-            const VoxelMap::vec3i_t cur_inds = vec3i_t(x_it, y_it, z_it);
-            if (cur_inds.norm() <= max_dist_idx)
-            {
-              index_offsets.push_back(cur_inds);
-            }
-          }
-        }
-      }
-
-      const float update_val = m_drmgr_ptr->config.voxel_map__scores__ray;
-      const float w_update_single = 0.5f;
-      const float w1 = std::clamp(std::pow(1.0f - w_update_single, detection_its_diff), 0.0f, 1.0f);
-      const float w2 = 1.0f - w1;
-
-      for (size_t it = 0; it < clusters_indices.size(); it++)
-      {
-        const unsigned cur_n_sure = clusters_n_sure.at(it);
-        if (cur_n_sure < n_pts_sure_cluster)
-        {
-          const auto cluster_indices = clusters_indices.at(it);
-          for (const auto& idx : cluster_indices.indices)
-          {
-            const vec3i_t pos = vmap_pc_ds->points[idx].getVector3fMap().cast<int>();
-            for (const auto& offset : index_offsets)
-            {
-              const vec3i_t pt = pos + offset;
-              if (!m_voxel_map.inLimitsIdx(pt))
-                continue;
-              auto& mapval = m_voxel_map.atIdx(pt.x(), pt.y(), pt.z());
-              mapval = w1*mapval + w2*update_val;
-
-              if (publish)
-              {
-                const vec3_t coords = local_vmap.idxToCoord(pt);
-                pt_XYZR_t pub_pt;
-                pub_pt.getVector3fMap() = coords;
-                pub_pt.range = it;
-                pc.push_back(pub_pt);
-              }
-            }
-          }
-        }
-      }
-      publish_profile_end(profile_routines_t::sepbgclusters);
-      tim.checkpoint("score update");
-      if (publish)
-        m_pub_sepclusters_pc.publish(pc);
-    }
-    //}
-
-    void bgclusters_loop()
-    {
-      // a local copy of the current global voxelmap (to avoid waiting for mutexes)
-      VoxelMap local_vmap;
-      {
-        // resize the voxel maps
-        std::lock_guard lck(m_voxels_mtx);
-        local_vmap.resizeAs(m_voxel_map);
-      }
-      while (ros::ok())
-      {
-        updateSeparatedBGClusters(local_vmap);
-        m_bgclusters_period.sleep();
       }
     }
 
@@ -1400,8 +1057,6 @@ namespace vofod
       
       //}
 
-      std::thread bgclusters_thread(&VoFOD::bgclusters_loop, this);
-      std::thread rangefinder_thread(&VoFOD::rangefinder_loop, this);
       std::vector<std::thread> pointcloud_threads;
       for (int it = 0; it < m_n_pc_threads; it++)
         pointcloud_threads.emplace_back(&VoFOD::pointcloud_loop, this, it);
@@ -1428,22 +1083,6 @@ namespace vofod
 
         //}
 
-        // publish the operational area borders marker (only once)
-        /*  //{ */
-
-        static bool oparea_published = false;
-        if (!oparea_published)
-        {
-          std_msgs::Header header;
-          header.frame_id = m_world_frame_id;
-          header.stamp = ros::Time::now();
-          const auto msg_ptr = m_voxel_map.borderVisualization(header);
-          m_pub_oparea.publish(msg_ptr);
-          oparea_published = true;
-        }
-
-        //}
-
         // publish the max. detection range (only once)
         if (m_sh_pc.hasMsg())
         {
@@ -1464,15 +1103,51 @@ namespace vofod
         }
       }
 
-      bgclusters_thread.join();
-      rangefinder_thread.join();
       for (auto& el : pointcloud_threads)
         el.join();
     }
     //}
 
+    /* range_callback() method //{ */
+
+    void range_callback(const sensor_msgs::Range::ConstPtr msg)
+    {
+      mrs_lib::ScopeTimer stimer("range", {"msg stamp", msg->header.stamp}, m_throttle_period);
+      // check validity of the measured range
+      if (msg->range <= msg->min_range && msg->range >= msg->max_range)
+        return;
+
+      m_ranges_buffer.push_back(msg->range);
+      if ((int)m_ranges_buffer.size() >= m_ranges_buffer_len)
+      {
+        std::vector<double> ranges_buffer_sorted;
+        ranges_buffer_sorted.insert(std::end(ranges_buffer_sorted), std::begin(m_ranges_buffer), std::end(m_ranges_buffer));
+        std::sort(std::begin(ranges_buffer_sorted), std::end(ranges_buffer_sorted));
+        const double median_range = ranges_buffer_sorted.at(ranges_buffer_sorted.size()/2);
+        const vec3_t pt_sensor_frame = median_range * vec3_t::UnitX();;
+
+        // publish the point as a pointcloud
+        pt_XYZI_t pt;
+        pt.getVector3fMap() = pt_sensor_frame;
+        pt.intensity = m_ranges_buffer.size();
+        pc_XYZI_t range_pc;
+        range_pc.push_back(pt);
+        sensor_msgs::PointCloud2 range_pc_msg;
+        pcl::toROSMsg(range_pc, range_pc_msg);
+        range_pc_msg.header = msg->header;
+        m_pub_rangefinder_pc.publish(range_pc_msg);
+        NODELET_INFO_THROTTLE(2.0, "[VoFOD]: Publishing range measurement as pointcloud.");
+
+        // finally, clear the buffer
+        m_ranges_buffer.clear();
+      }
+    }
+
+    //}
+
     void tsdf_layer_callback(const voxblox_msgs::Layer::ConstPtr msg_ptr)
     {
+      std::scoped_lock lck(m_tsdf_map_mtx);
       const bool success = voxblox::deserializeMsgToLayer<voxblox::TsdfVoxel>(*msg_ptr, m_tsdf_map->getTsdfLayerPtr());
 
       if (!success)
@@ -1480,224 +1155,11 @@ namespace vofod
     }
 
   private:
-    /* raycast_cloud() method //{ */
-    void raycast_cloud(const pc_t::ConstPtr cloud, const Eigen::Affine3f& tf)
-    {
-      mrs_lib::AtomicScopeFlag run_flag(m_raycast_running); // will be automatically unset when scope ends
-      if (m_drmgr_ptr->config.raycast__pause)
-      {
-        NODELET_WARN_THROTTLE(1.0, "[RaycastCloud]: Pointcloud raycasting disabled, skipping.");
-        return;
-      }
-      publish_profile_start(profile_routines_t::raycasting);
-
-      if ((int)cloud->height != m_sensor_vrays || (int)cloud->width != m_sensor_hrays)
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Pointcloud has wrong dimensions, cannot raycast, skipping (has: [%ux%u], expected: [%dx%d]).", cloud->width, cloud->height, m_sensor_hrays, m_sensor_vrays);
-        return;
-      }
-
-      if (!m_sensor_params_checked)
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Couldn't check validity of sensor's parameters (no valid points on pointcloud?), skipping.");
-        return;
-      }
-
-      if (!m_sensor_params_ok)
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Pointcloud doesn't correspond to the expected sensor parameters! Make sure they're set correctly (maybe you're using a different sensor?). Cannot raycast, skipping.");
-        return;
-      }
-
-      const int start_detection_its = m_detection_its;
-      mrs_lib::ScopeTimer tim("raycasting", m_throttle_period);;
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[RaycastCloud]: Started raycasting data with " << cloud->size() << " points ---------------------------------------------- ");
-      const auto tf_rot = tf.rotation();
-      const vec3_t origin_pt = tf.translation();  // origin of all rays of the lidar sensor
-      m_voxel_raycast.clear(); // clear the helper voxelmap
-      // do not raycast if the sensor is out of bounds
-      if (m_voxel_raycast.inLimits(origin_pt.x(), origin_pt.y(), origin_pt.z()))
-      {
-        bool publish = m_pub_lidar_raycast.getNumSubscribers() > 0;
-        const float max_dist = (float)m_drmgr_ptr->config.raycast__max_distance;
-        const float min_intensity = (float)m_drmgr_ptr->config.raycast__min_intensity;
-
-        // go through all points in the cloud and update voxels in the helper voxelmap that the rays
-        // from the sensor origin to the point go through according to how long part of the ray
-        // intersects the voxel
-        for (int row = 0; row < (int)cloud->height; row++)
-        {
-          for (int col = 0; col < (int)cloud->width; col++)
-          {
-            const auto pt = cloud->at(col, row);
-            const auto intensity = pt.intensity;
-            const unsigned idx = row * cloud->width + col;
-
-            if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
-              continue;
-
-            const vec3_t dir1 = m_sensor_xyz_lut.directions.col(idx);
-            const vec3_t dir = tf_rot*dir1;
-
-            constexpr float range_to_meters = 0.001f;
-            const float ray_dist = range_to_meters*float(pt.range);
-            const float dist = ray_dist == 0.0f ? max_dist : std::min(ray_dist - m_vmap_voxel_size, max_dist);
-
-            const vec3_t start_pt = tf_rot*m_sensor_xyz_lut.offsets.col(idx) + origin_pt;
-      
-            // TODO: reduce to just one check with max. ray offset
-            // check if the ray origin including the ray offset (intrinsic mechanical sensor parameter)
-            // is still within bounds of the operational area
-            if (m_voxel_raycast.inLimits(start_pt.x(), start_pt.y(), start_pt.z()))
-            {
-              m_voxel_raycast.forEachRay(start_pt, dir, dist,
-                  [this](const VoxelMap::coord_t val, const VoxelMap::idx_t x_idx, const VoxelMap::idx_t y_idx, const VoxelMap::idx_t z_idx)
-                  {
-                    auto& raycastval = m_voxel_raycast.atIdx(x_idx, y_idx, z_idx);
-                    raycastval += val;
-                  });
-            }
-          }
-        }
-
-        // publish the visualization if requested
-        if (publish)
-        {
-          std_msgs::Header header;
-          header.frame_id = m_world_frame_id;
-          pcl_conversions::fromPCL(cloud->header.stamp, header.stamp);
-          m_pub_lidar_raycast.publish(m_voxel_raycast.visualization(header));
-        }
-
-        if (m_pub_lidar_fov.getNumSubscribers() > 0)
-        {
-          std_msgs::Header header;
-          header.frame_id = cloud->header.frame_id;
-          pcl_conversions::fromPCL(cloud->header.stamp, header.stamp);
-          std::vector<float> lengths(cloud->size(), 0);
-          for (int idx = 0; idx < (int)cloud->size(); idx++)
-          {
-            const auto pt = cloud->at(idx);
-            const auto intensity = pt.intensity;
-            if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
-              continue;
-            auto range = 0.001f*pt.range;
-            if (range == 0)
-              range = m_drmgr_ptr->config.raycast__max_distance;
-            lengths.at(idx) = range;
-          }
-          const auto msg = lidar_visualization(header, lengths);
-          m_pub_lidar_fov.publish(msg);
-        }
-      } else
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Sensor is outside of the operational area! Cannot update map (detection may misbehave).");
-      }
-      tim.checkpoint("raycasting");
-
-      // wait for at least one detection to finish (no use raycasting if detection_its_diff is zero)
-      std::unique_lock lck(m_voxels_mtx);
-      if (
-          m_detection_its == start_detection_its // first check if it's even necessary to wait (if this condition is false, the waiting will be skipped)
-       && (m_detection_cv.wait_for(lck, std::chrono::milliseconds(800)) == std::cv_status::timeout || m_detection_its == start_detection_its)) // then try waiting and re-check if we got more detections
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Raycast thread timed out after 0.8s waiting for a detection to finish. Ending.");
-        return;
-      }
-      tim.checkpoint("wait for dets");
-      const float detection_its_diff = m_detection_its - start_detection_its;
-      
-      // the maximal value in the helper voxelmap will be used to normalize the voxelmap to values in the range <0; 1>
-      const float max_val = *std::max_element(std::begin(m_voxel_raycast), std::end(m_voxel_raycast));
-      // if max_val is zero, there's nothing to update
-      if (max_val == 0.0f)
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Maximum raycasted value is zero. This is strange (empty pointcloud?). Skipping raycast.");
-        return;
-      }
-
-      if (m_drmgr_ptr->config.raycast__new_update_rule)
-      {
-        // update the main voxel map using values from the helper voxelmap
-        const float ray_update_score = m_drmgr_ptr->config.voxel_map__scores__ray;        // this is the value that voxels will converge to if consistently raycasted as empty
-        const float ray_update_weight = m_drmgr_ptr->config.raycast__weight_coefficient;  // used to slow down or speed up the convergence
-        const float voxel_diag = std::sqrt(3.0f)*m_vmap_voxel_size;
-        const float weighting_factor = ray_update_weight/voxel_diag;
-        m_voxel_flags.forEachIdx(
-              [detection_its_diff, ray_update_score, weighting_factor, this](VoxelMap::data_t& flag, const VoxelMap::idx_t xc, const VoxelMap::idx_t yc, const VoxelMap::idx_t zc)
-              {
-                float raycastval;
-                if (flag == m_vflags_unmarked && (raycastval = m_voxel_raycast.atIdx(xc, yc, zc)) > 0.0f)
-                {
-                  auto& mapval = m_voxel_map.atIdx(xc, yc, zc);
-                  // normalize the raycast values by the voxel's diagonal length
-                  const float n_int = weighting_factor*raycastval;
-                  // calculate weights as if the update was done detection_its_diff-times
-                  const float w1 = std::pow(2, -detection_its_diff*n_int);
-                  const float w2 = 1.0f - w1;
-                  mapval = w1*mapval + w2*ray_update_score;
-                }
-              }
-            );
-      }
-      else
-      {
-       // update the main voxel map using values from the helper voxelmap
-       const float ray_update_score = m_drmgr_ptr->config.voxel_map__scores__ray;        // this is the value that voxels will converge to if consistently raycasted as empty
-       const float ray_update_weight = m_drmgr_ptr->config.raycast__weight_coefficient;  // used to slow down or speed up the convergence
-       m_voxel_flags.forEachIdx(
-            [detection_its_diff, ray_update_score, max_val, ray_update_weight, this](VoxelMap::data_t& flag, const VoxelMap::idx_t xc, const VoxelMap::idx_t yc, const VoxelMap::idx_t zc)
-             {
-               float raycastval;
-              auto& mapval = m_voxel_map.atIdx(xc, yc, zc);
-               if (flag == m_vflags_unmarked && (raycastval = m_voxel_raycast.atIdx(xc, yc, zc)) > 0.0f)
-               {
-                // normalize the raycast values to range <0; 1>
-                const float norm_val = raycastval/max_val;
-                // apply the non-linear transformation (fancy name for square root) and user-set weight
-                // the square root ensures that close voxels with significantly higher value than far voxels are not updated too aggressively
-                // (this counters the much higher ray density in around the sensors)
-                const float w_update_single = ray_update_weight*std::sqrt(norm_val);
-                 // calculate weights as if the update was done detection_its_diff-times
-                 const float w1 = std::clamp(std::pow(1.0f - w_update_single, detection_its_diff), 0.0f, 1.0f);
-                 const float w2 = 1.0f - w1;
-                /* if (w1 < 0.0f || w2 < 0.0f) */
-                /*   ROS_ERROR("[VoFOD]: Invalid weight: w1 = %.2f, w2 = %.2f!", w1, w2); */
-                 mapval = w1*mapval + w2*ray_update_score;
-               }
-             }
-           );
-      }
-      m_voxel_flags.clear();
-      publish_profile_end(profile_routines_t::raycasting);
-      tim.checkpoint("vmap update");
-    }
-    //}
-
     /* reset() method //{ */
 
     void reset()
     {
-      std::scoped_lock lck(m_voxels_mtx);
-      if (m_raycast_thread.joinable())
-        m_raycast_thread.join();
-
-      m_voxel_map.resize(m_oparea_offset_x, m_oparea_offset_y, m_oparea_offset_z, m_oparea_size_x, m_oparea_size_y, m_oparea_size_z, m_vmap_voxel_size);
-      m_voxel_map.setTo(m_vmap_init_score);
-      const auto [vmap_size_x, vmap_size_y, vmap_size_z] = m_voxel_map.sizesIdx();
-      NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Voxel map reset to [" << vmap_size_x << ", " << vmap_size_y << ", " << vmap_size_z << "] size.");
-
-      m_voxel_flags.resizeAs(m_voxel_map);
-      m_voxel_flags.addVisualizationThreshold(m_vflags_point-0.1, m_vflags_color_background);
-      m_voxel_flags.addVisualizationThreshold(m_vflags_unknown-0.1, m_vflags_color_unknown);
-      m_voxel_flags.clear();
-
-      m_voxel_raycast.resizeAs(m_voxel_map);
-      m_voxel_raycast.addVisualizationThreshold(m_vflags_point-0.1, m_vflags_color_background);
-      m_voxel_raycast.addVisualizationThreshold(m_vflags_unknown-0.1, m_vflags_color_unknown);
-      m_detection_its = 0;
-
-      NODELET_WARN_THROTTLE(1.0, "[VoFOD]: Voxelmaps reset!");
+      // TODO
     }
 
     //}
@@ -1766,24 +1228,17 @@ namespace vofod
         const int max_explore_voxel_size = static_cast<int>(std::ceil((ret.obb_size + m_drmgr_ptr->config.classification__max_explore_distance)/m_vmap_voxel_size));
         // check if every point in the cluster is floating (all points in a 26-neighborhood
         // are known to be empty -> their value is <= m_drmgr_ptr->config.voxel_map__thresholds__frontiers)
+        std::scoped_lock lck(m_tsdf_map_mtx);
         for (const auto idx : cluster_indices->indices)
         {
-          const auto& pt = cloud->at(idx);
-          /* const auto [is_connected, explored_idxs] = exploreToGround(m_tsdf_map, pt.x, pt.y, pt.z, max_explore_voxel_size); */
-          const auto [is_connected, explored_idxs] = m_voxel_map.exploreToGround(pt.x, pt.y, pt.z, m_drmgr_ptr->config.voxel_map__thresholds__frontiers, m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles, max_explore_voxel_size);
+          const vec3_t pt = cloud->at(idx).getVector3fMap();
+          const auto is_connected = exploreToGround(m_tsdf_map->getTsdfLayer(), pt, max_explore_voxel_size);
+          /* const auto [is_connected, explored_idxs] = m_voxel_map.exploreToGround(pt.x, pt.y, pt.z, m_drmgr_ptr->config.voxel_map__thresholds__frontiers, m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles, max_explore_voxel_size); */
           // if it's connected to ground through unknown voxels, we're done here
           if (is_connected)
           {
             is_floating = false;
             break;
-          }
-          // if it's not connected to ground, update all the unknown voxels to air!
-          else
-          {
-            for (const auto& idx : explored_idxs)
-            {
-              m_voxel_map.at(idx) = m_drmgr_ptr->config.voxel_map__thresholds__frontiers;
-            }
           }
         }
       }
@@ -1816,7 +1271,7 @@ namespace vofod
       }
     };
     
-    bool exploreToGround(const voxblox::Layer<voxblox::TsdfVoxel>& map, const vec3_t coords, const int max_voxel_dist) const
+    bool exploreToGround(const voxblox::Layer<voxblox::TsdfVoxel>& layer, const vec3_t coords, const int max_voxel_dist) const
     {
       using bidx_t = voxblox::BlockIndex;
       using vidx_t = voxblox::VoxelIndex;
@@ -1829,9 +1284,14 @@ namespace vofod
       const float min_ground_dist = 1.5;
       const float min_weight = 5;
 
-      const bidx_t orig_bidx = map.computeBlockIndexFromCoordinates(coords);
-      const vidx_t orig_vidx = map.getBlockByIndex(orig_bidx).computeVoxelIndexFromCoordinates(coords);
-      const gidx_t orig_gidx = voxblox::getGlobalVoxelIndexFromBlockAndVoxelIndex(orig_bidx, orig_vidx, map.voxels_per_side());
+      const bidx_t orig_bidx = layer.computeBlockIndexFromCoordinates(coords);
+      const voxblox::Block<voxblox::TsdfVoxel>::ConstPtr block = layer.getBlockPtrByIndex(orig_bidx);
+      // if the block is not allocated, consider the cluster to be not floating (thus, connected to ground)
+      if (block == nullptr)
+        return true;
+      // otherwise, continue to get its global index
+      const vidx_t orig_vidx = block->computeVoxelIndexFromCoordinates(coords);
+      const gidx_t orig_gidx = voxblox::getGlobalVoxelIndexFromBlockAndVoxelIndex(orig_bidx, orig_vidx, layer.voxels_per_side());
     
       std::unordered_set<gidx_t, hash_evec<gidx_t::Scalar>> explored;
       std::vector<gidx_t> explored_unknown;
@@ -1843,9 +1303,9 @@ namespace vofod
       {
         const auto cur_idx = to_explore.back();
         to_explore.pop_back(); // DFS
-        const vox_t* cur_vox = map.getVoxelPtrByGlobalIndex(cur_idx);
+        const vox_t* cur_vox = layer.getVoxelPtrByGlobalIndex(cur_idx);
     
-        if (cur_vox->distance < min_ground_dist)
+        if (cur_vox == nullptr || cur_vox->distance < min_ground_dist)
           return true;
 
         if (cur_vox->weight < min_weight)
@@ -2199,16 +1659,7 @@ namespace vofod
         if (cluster.cclass == cluster_class_t::invalid || cluster.cclass == cluster_class_t::mav)
           continue;
 
-        auto mkr = cluster.submap.visualization(header);
-        if (!mkr.points.empty())
-        {
-          mkr.color.a = 0.2;
-          mkr.id = id++;
-          ret.markers.push_back(mkr);
-        }
-        mkr = cluster.submap.borderVisualization(header);
-        mkr.id = id++;
-        ret.markers.push_back(mkr);
+        // TODO
       }
 
       // delete previous markers if necessary
@@ -2360,7 +1811,6 @@ namespace vofod
 
     ros::Publisher m_pub_vmap;
     ros::Publisher m_pub_update_flags;
-    ros::Publisher m_pub_oparea;
 
     ros::Publisher m_pub_rangefinder_pc;
     ros::Publisher m_pub_filtered_input_pc;
@@ -2434,13 +1884,6 @@ namespace vofod
     float m_exclude_box_size_y;
     float m_exclude_box_size_z;
 
-    float m_oparea_offset_x;
-    float m_oparea_offset_y;
-    float m_oparea_offset_z;
-    float m_oparea_size_x;
-    float m_oparea_size_y;
-    float m_oparea_size_z;
-
     ros::Duration m_throttle_period;
 
     //}
@@ -2461,9 +1904,10 @@ namespace vofod
     // |                   Other member variables                   |
     // --------------------------------------------------------------
 
-    int m_range_filter_length;
+    int m_ranges_buffer_len;
     std::vector<double> m_ranges_buffer;
 
+    std::mutex m_tsdf_map_mtx;
     std::unique_ptr<voxblox::TsdfMap> m_tsdf_map;
 
     bool m_apriori_map_initialized;
@@ -2476,18 +1920,9 @@ namespace vofod
     std::atomic<bool> m_sure_background_sufficient;
     uint64_t m_background_min_sufficient_pts;
 
-    std::mutex m_voxels_mtx;
-    std::condition_variable m_detection_cv;
-    std::thread m_raycast_thread;
-    std::atomic<bool> m_raycast_running;
-    std::atomic<int> m_detection_its;
-    VoxelMap m_voxel_map;
-
     static constexpr float m_vflags_unmarked = 0.0f;
     static constexpr float m_vflags_point = 2.0f;
     static constexpr float m_vflags_unknown = 3.0f;
-    VoxelMap m_voxel_flags;
-    VoxelMap m_voxel_raycast;
 
   };  // class VoFOD
 }     // namespace vofod
