@@ -61,6 +61,8 @@ classification:
   max_distance: 25.0 # meters
   # when looking for a connection of a cluster to the ground, a neighborhood of maximally this distance will be considered
   max_explore_distance: 3.0 # meters
+  min_ground_distance: 1.5 # metres
+  min_voxel_weight: 1.0 # measured points / metre
 
 raycast:
   pause: false

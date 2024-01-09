@@ -214,6 +214,7 @@ namespace vofod
       m_exclude_box_offset_z = m_exclude_box_offset_z + m_exclude_box_size_z / 2.0f;
 
       Eigen::Affine3f apriori_map_tf = Eigen::Affine3f::Identity();
+      float apriori_map_points_weight = pl.loadParam2<double>("apriori_map/points_weight");
       {
         const vec3_t translation(pl.loadParam2<double>("apriori_map/tf/x"), pl.loadParam2<double>("apriori_map/tf/y"), pl.loadParam2<double>("apriori_map/tf/z"));
         const Eigen::Matrix3f rotation = anax_t(pl.loadParam2<double>("apriori_map/tf/yaw")/180.0*M_PI, vec3_t::UnitZ()).toRotationMatrix();
@@ -284,7 +285,7 @@ namespace vofod
       m_sure_background_sufficient = false;
       m_background_pts_sufficient = false;
       m_apriori_map_initialized = false;
-      std::thread apriori_load_thread(&VoFOD::initialize_apriori_map, this, static_cloud_filename, apriori_map_tf);
+      std::thread apriori_load_thread(&VoFOD::initialize_apriori_map, this, static_cloud_filename, apriori_map_tf, apriori_map_points_weight);
       apriori_load_thread.detach();
 
       // initialize the sensor information
@@ -304,9 +305,9 @@ namespace vofod
     //}
 
     /* initialize_apriori_map() method //{ */
-    void initialize_apriori_map(std::string filename, const Eigen::Affine3f& transformation)
+    void initialize_apriori_map(std::string filename, const Eigen::Affine3f& transformation, const float points_weight)
     {
-      pc_XYZ_t::Ptr apriori_cloud = boost::make_shared<pc_XYZ_t>();
+      const auto apriori_cloud = boost::make_shared<pc_XYZI_t>();
       // if the filename is not specified, just leave the apriori cloud clear
       if (filename.empty())
       {
@@ -323,25 +324,30 @@ namespace vofod
           NODELET_ERROR("Failed to load the static pointcloud! Ending the node.");
           ros::shutdown();
           return;
-        } else
-        {
-          apriori_cloud = loaded_cloud;
-          pcl::transformPointCloud(*apriori_cloud, *apriori_cloud, transformation);
-          NODELET_INFO("Loaded a static cloud with %lu points.", apriori_cloud->size());
-
-          pc_XYZ_t::Ptr tmp_cloud = boost::make_shared<pc_XYZ_t>();
-          pcl::VoxelGrid<pt_XYZ_t> vg;
-          vg.setInputCloud(apriori_cloud);
-          vg.setLeafSize(m_vmap_voxel_size, m_vmap_voxel_size, m_vmap_voxel_size);
-          vg.filter(*tmp_cloud);
-          std::swap(apriori_cloud, tmp_cloud);
-          NODELET_INFO("Downsampled the static cloud to %lu points.", apriori_cloud->size());
-
-          // TODO
-
-          m_sure_background_sufficient = true;
-          m_background_pts_sufficient = true;
         }
+
+        pcl::transformPointCloud(*loaded_cloud, *loaded_cloud, transformation);
+        NODELET_INFO("Loaded a static cloud with %lu points.", loaded_cloud->size());
+
+        pcl::VoxelGrid<pt_XYZ_t> vg;
+        vg.setInputCloud(loaded_cloud);
+        vg.setLeafSize(m_vmap_voxel_size, m_vmap_voxel_size, m_vmap_voxel_size);
+        vg.filter(*loaded_cloud);
+        NODELET_INFO("Downsampled the static cloud to %lu points.", loaded_cloud->size());
+
+        apriori_cloud->points.reserve(loaded_cloud->size());
+        for (auto& pt : loaded_cloud->points)
+        {
+          pt_XYZI_t npt;
+          npt.x = pt.x;
+          npt.y = pt.y;
+          npt.z = pt.z;
+          npt.intensity = points_weight;
+          apriori_cloud->push_back(npt);
+        }
+
+        m_sure_background_sufficient = true;
+        m_background_pts_sufficient = true;
         m_apriori_map_initialized = true;
       }
 
@@ -1179,7 +1185,6 @@ namespace vofod
     template <typename Point>
     cluster_t classify_cluster(const typename boost::shared_ptr<pcl::PointCloud<Point>> cloud, const pcl::PointIndices::ConstPtr& cluster_indices, const Eigen::Affine3f& s2w_tf)
     {
-      // TODO: deal with voxels at the edge of the map separately (should never be classified as detections)
       cluster_t ret;
       ret.cclass = cluster_class_t::invalid;
 
@@ -1225,14 +1230,16 @@ namespace vofod
       // if ground is available, check floatingness of the cluster (otherwise it cannot be decided)
       if (m_background_pts_sufficient && m_sure_background_sufficient)
       {
-        const int max_explore_voxel_size = static_cast<int>(std::ceil((ret.obb_size + m_drmgr_ptr->config.classification__max_explore_distance)/m_vmap_voxel_size));
+        const int max_explore_vdist = static_cast<int>(std::ceil((ret.obb_size + m_drmgr_ptr->config.classification__max_explore_distance)/m_vmap_voxel_size));
+        const float min_ground_dist = static_cast<float>(m_drmgr_ptr->config.classification__min_ground_distance);
+        const float min_voxel_weight = static_cast<float>(m_drmgr_ptr->config.classification__min_voxel_weight);
         // check if every point in the cluster is floating (all points in a 26-neighborhood
         // are known to be empty -> their value is <= m_drmgr_ptr->config.voxel_map__thresholds__frontiers)
         std::scoped_lock lck(m_tsdf_map_mtx);
         for (const auto idx : cluster_indices->indices)
         {
           const vec3_t pt = cloud->at(idx).getVector3fMap();
-          const auto is_connected = exploreToGround(m_tsdf_map->getTsdfLayer(), pt, max_explore_voxel_size);
+          const auto is_connected = exploreToGround(m_tsdf_map->getTsdfLayer(), pt, max_explore_vdist, min_ground_dist, min_voxel_weight);
           /* const auto [is_connected, explored_idxs] = m_voxel_map.exploreToGround(pt.x, pt.y, pt.z, m_drmgr_ptr->config.voxel_map__thresholds__frontiers, m_drmgr_ptr->config.voxel_map__thresholds__new_obstacles, max_explore_voxel_size); */
           // if it's connected to ground through unknown voxels, we're done here
           if (is_connected)
@@ -1271,7 +1278,7 @@ namespace vofod
       }
     };
     
-    bool exploreToGround(const voxblox::Layer<voxblox::TsdfVoxel>& layer, const vec3_t coords, const int max_voxel_dist) const
+    bool exploreToGround(const voxblox::Layer<voxblox::TsdfVoxel>& layer, const vec3_t coords, const int max_explore_vdist, const float min_ground_dist, const float min_weight) const
     {
       using bidx_t = voxblox::BlockIndex;
       using vidx_t = voxblox::VoxelIndex;
@@ -1280,10 +1287,7 @@ namespace vofod
       using neighborhood_t = voxblox::Neighborhood<voxblox::Connectivity::kSix>;
       using neighbors_t = neighborhood_t::IndexMatrix;
 
-      const float max_voxel_dist_sq = float(max_voxel_dist)*float(max_voxel_dist);
-      const float min_ground_dist = 1.5;
-      const float min_weight = 5;
-
+      const float max_explore_vdist_sq = float(max_explore_vdist)*float(max_explore_vdist);
       const bidx_t orig_bidx = layer.computeBlockIndexFromCoordinates(coords);
       const voxblox::Block<voxblox::TsdfVoxel>::ConstPtr block = layer.getBlockPtrByIndex(orig_bidx);
       // if the block is not allocated, consider the cluster to be not floating (thus, connected to ground)
@@ -1312,7 +1316,7 @@ namespace vofod
         {
           explored_unknown.push_back(cur_idx);
           // check if we're at the edge of the search area
-          if ((orig_gidx - cur_idx).squaredNorm() == max_voxel_dist_sq)
+          if ((orig_gidx - cur_idx).squaredNorm() == max_explore_vdist_sq)
             return true; // if so, consider this cluster to be connected to ground
     
           neighbors_t neighbors;

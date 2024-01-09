@@ -30,7 +30,7 @@ windows:
   - vofod:
       layout: tiled
       panes:
-        - waitForRos; sleep 3; roslaunch vofod detect.launch apriori_map_filename:="$DETECTOR_PATH/data/usmocku.pts" apriori_map_config_filename:="$DETECTOR_PATH/config/apriori_maps/sim.yaml" mask_filename:="$DETECTOR_PATH/masks/eaglemk2_os0_mask.bmp" sensor_check_consistency:=false rangefinder_topic:=/$UAV_NAME/mavros/distance_sensor/garmin debug:=true
+        - waitForRos; sleep 3; roslaunch vofod detect.launch apriori_map_filename:="$DETECTOR_PATH/data/usmocku.pts" apriori_map_config_filename:="$DETECTOR_PATH/config/apriori_maps/usmocku.yaml" mask_filename:="$DETECTOR_PATH/masks/eaglemk2_os0_mask.bmp" sensor_check_consistency:=false rangefinder_topic:=/$UAV_NAME/mavros/distance_sensor/garmin debug:=true
   # - lidar_track:
   #     layout: tiled
   #     panes:
