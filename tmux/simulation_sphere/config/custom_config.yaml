@@ -1,0 +1,36 @@
+mrs_uav_managers:
+
+  estimation_manager:
+
+    # loaded state estimator plugins
+    state_estimators: [
+      "rtk",
+      "gps_garmin",
+      "gps_baro",
+      "ground_truth",
+    ]
+
+    initial_state_estimator: "rtk" # will be used as the first state estimator
+    agl_height_estimator: "garmin_agl" # only slightly filtered height for checking min height (not used in control feedback)
+
+  uav_manager:
+
+    takeoff:
+
+      during_takeoff:
+        controller: "MpcController"
+        tracker: "LandoffTracker"
+
+      after_takeoff:
+        # controller: "MpcController"
+        controller: "Se3Controller"
+        tracker: "MpcTracker"
+
+      takeoff_height: 4.0
+
+  constraint_manager:
+
+    # those constraints will be used automatically when a localization mode switches
+    # and the current constraints are not in the allowed list (next paragraphs)
+    default_constraints:
+      rtk: "fast"

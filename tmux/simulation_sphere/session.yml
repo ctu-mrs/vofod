@@ -14,28 +14,20 @@ windows:
       layout: tiled
       panes:
         - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find eagle_gazebo_resources`/worlds/grass_plane_with_sphere.world gui:=true
-        - waitForGazebo; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-ground-truth --enable-ouster --ouster-model OS1-128 --use-gpu-ray --horizontal-samples 1024 --rotation-freq 10"
-        - waitForGazebo; rosservice call /mrs_drone_spawner/spawn "2 $UAV_TYPE --enable-rangefinder --enable-ground-truth"
+        - waitForGazebo; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-ground-truth --enable-ouster --ouster-model OS1-128 --horizontal-samples 1024 --rotation-freq 10"
         - waitForControl; gz camera -c gzclient_camera -f $UAV_NAME; history -s gz camera -c gzclient_camera -f $UAV_NAME
   - status:
       layout: tiled
       panes:
         - export UAV_NAME=uav1; waitForHw; roslaunch mrs_uav_status status.launch
-        - export UAV_NAME=uav2; waitForHw; roslaunch mrs_uav_status status.launch
   - hw_api:
       layout: tiled
       panes:
         - export UAV_NAME=uav1; waitForTime; roslaunch mrs_uav_px4_api api.launch
-        - export UAV_NAME=uav2; waitForTime; roslaunch mrs_uav_px4_api api.launch
   - core:
       layout: tiled
       panes:
         - export UAV_NAME=uav1; waitForHw; roslaunch mrs_uav_core core.launch
-          platform_config:=`rospack find mrs_uav_gazebo_simulation`/config/mrs_uav_system/$UAV_TYPE.yaml
-          custom_config:=./config/custom_config.yaml
-          world_config:=./config/world_config.yaml
-          network_config:=./config/network_config.yaml
-        - export UAV_NAME=uav2; waitForHw; roslaunch mrs_uav_core core.launch
           platform_config:=`rospack find mrs_uav_gazebo_simulation`/config/mrs_uav_system/$UAV_TYPE.yaml
           custom_config:=./config/custom_config.yaml
           world_config:=./config/world_config.yaml
@@ -45,16 +37,14 @@ windows:
       panes:
         - export UAV_NAME=uav1; waitForHw; roslaunch mrs_uav_autostart automatic_start.launch
         - export UAV_NAME=uav1; waitForControl; rosservice call /$UAV_NAME/hw_api/arming 1; sleep 2; rosservice call /$UAV_NAME/hw_api/offboard
-        - export UAV_NAME=uav2; waitForHw; roslaunch mrs_uav_autostart automatic_start.launch
-        - export UAV_NAME=uav2; waitForControl; rosservice call /$UAV_NAME/hw_api/arming 1; sleep 2; rosservice call /$UAV_NAME/hw_api/offboard
-        - waitForOffboard; sleep 15; roslaunch mrs_uav_trajectory_loader load.launch config:=$VOFOD_PATH/tmux/simulation/config/trajectories/params.yaml
+        - waitForOffboard; sleep 15; roslaunch mrs_uav_trajectory_loader load.launch path:=$VOFOD_PATH/tmux/simulation_sphere/config/trajectories config:=$VOFOD_PATH/tmux/simulation_sphere/config/trajectories/params.yaml
+  - pcl_filter:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; waitForRos; roslaunch mrs_pcl_tools pcl_filter.launch custom_config:=$VOFOD_PATH/tmux/simulation_sphere/config/pcl_filter.yaml
   - rviz:
       layout: tiled
       panes:
         - waitForControl; rviz -d $VOFOD_PATH/rviz/uav1.rviz
         - waitForControl; roslaunch mrs_rviz_plugins load_robot.launch
         - waitForControl; roslaunch mrs_rviz_plugins rviz_interface.launch
-  - detection:
-      layout: tiled
-      panes:
-        - export UAV_NAME=uav1; waitForControl; roslaunch vofod detect.launch world_frame_id:=$UAV_NAME/world_origin apriori_map_config_filename:=$VOFOD_PATH/config/apriori_maps/sim.yaml sensor_config_filename:=$VOFOD_PATH/config/sensors/os1-128.yaml

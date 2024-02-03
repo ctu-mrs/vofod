@@ -1,0 +1,53 @@
+scope_timer:
+  enable: false
+  log_filename: ""
+
+lidar3d:
+
+  name:      "ouster"
+  frequency: 10       # [Hz]
+  vfov:      90       # [deg]
+
+  republish: true
+  keep_organized: false
+
+  clip:
+    range:
+      use: true
+      min: 2.0  # [m]
+      max: 35.0 # [m]
+    intensity:
+      use: false
+      threshold: 35
+      range: 5.0
+    reflectivity:
+      use: false
+      threshold: 25
+      range: 5.0
+
+  cropbox:
+    use: true
+    crop_inside: false # if true, points inside the box will be cropped, otherwise points outside will be cropped
+    frame_id: "rtk_origin"
+    min: [-35.0, -35.0, 4.0]
+    max: [35.0, 35.0, 100.0]
+
+  ground_removal:
+    use: false
+    range:
+      use: true
+    static_frame_id: gps_origin
+    max_precrop_height: 2.0
+    ransac:
+      max_inlier_distance: 0.5
+    offset: 1.0
+    publish_plane_marker: true
+
+  downsampling:
+    dynamic_row_selection: false
+    row_step: 1
+    col_step: 1
+
+rplidar:
+  republish: false
+  voxel_resolution: 0.05

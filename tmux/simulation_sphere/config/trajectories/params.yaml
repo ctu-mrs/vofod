@@ -1,0 +1,9 @@
+trajectory:
+  dt: 1.0
+  loop: true
+  fly_now: true
+  dynamic_uav_name: false
+  uavs:
+    uav1:
+      filename: "fast_line.txt"
+      offset: [0.0, 0.0, 10.0, 0.0]      # [x, y, z, heading]
