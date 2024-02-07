@@ -82,48 +82,23 @@ def load_avels(msg):
         exit(1)
 
 
-def find_prev(what, times, start_idx):
-    t_prev = times[start_idx]
-    inp_prev = np.nan*np.ones_like(what[start_idx])
-    for it in range(start_idx, -1, -1):
-        inp = what[it, :]
-        if not np.any(np.isnan(inp)):
-            t_prev = times[it]
-            inp_prev = inp
-            return (t_prev, inp_prev)
+def slerp_rotations(to_times, from_times, from_rots):
+        slerp = Slerp(from_times, from_rots)
+
+        # ensure that the interpolation times are within the from_times limits
+        time_greater = to_times > from_times[0]
+        time_smaller = to_times < from_times[-1]
+        within_time = time_greater * time_smaller
+        slerp_times = to_times[within_time]
+
+        # do the actual interpolation using SciPy
+        slerped = slerp(slerp_times)
+        return slerped, within_time
 
 
-def find_next(what, times, start_idx):
-    t_prev = times[start_idx]
-    inp_next = np.nan*np.ones_like(what[start_idx])
-    for it in range(start_idx, len(times), +1):
-        inp = what[it, :]
-        if not np.any(np.isnan(inp)):
-            t_prev = times[it]
-            inp_next = inp
-            return (t_prev, inp_next)
-
-
-def interpolate(what, according_to, times):
-    if len(what) != len(according_to) or len(what) != len(times):
-        print("[interpolate]: mismatch in array lengths!")
-        exit(1)
-    N = len(times)
-    ret = what
-    for it in range(N):
-        vec = according_to[it, :]
-        if np.any(np.isnan(vec)):
-            continue
-        
-        t = times[it]
-
-        t_prev, inp_prev = find_prev(what, times, it)
-        t_next, inp_next = find_next(what, times, it)
-
-        inp = interp_fn(t, t_prev, inp_prev, t_next, inp_next)
-        ret[it, :] = inp
-    return ret
-
+def rots_to_xyz(rotations):
+    return np.array([quat2xyzrot(R.as_quat()) for R in rotations])
+    
 
 # #} end of helper methods
 
@@ -195,11 +170,17 @@ def load_rosbag(bag, obs_uav, params):
 
         it += 1
 
+    # cut off invalid samples
+    for key, val in ret.items():
+        ret[key] = ret[key][:it]
+
     print("Loaded {}/{} total messages".format(it, n_msgs))
     print("Loaded {} angle messages on topic {}".format(np.sum(~np.isnan(ret["angs"]).any(axis=1)), ang_topic))
     print("Loaded {} velocity messages on topic {}".format(np.sum(~np.isnan(ret["avels"]).any(axis=1)), avel_topic))
     print("Loaded {} angle messages on topic {}".format(len(gt_rots), gt_ang_topic))
     print("Loaded {} velocity messages on topic {}".format(np.sum(~np.isnan(ret["gt_avels"]).any(axis=1)), gt_avel_topic))
+
+    n_msgs = it
 
     ## | -------------- Sort the loaded data by time -------------- |
     sort_idcs = np.argsort(ret["times"])
@@ -211,33 +192,70 @@ def load_rosbag(bag, obs_uav, params):
 
     gt_rot_sort_idcs = np.argsort(gt_rot_times)
     gt_rot_times = np.array(gt_rot_times)[gt_rot_sort_idcs]
-    gt_rots = np.array(gt_rots)[gt_rot_sort_idcs]
+    gt_rots = Rotation.concatenate(np.array(gt_rots)[gt_rot_sort_idcs])
+
+    dt = 0
+
+    if params["optimize_time"]:
+        ax = params["optimize_time_axis"]
+        c_step = 0.01
+        dt_step = 1e-2
+        angs_valid = ~np.isnan(ret["angs"]).any(axis=1)
+        for tit in range(100):
+            cur_gt_rot_times = gt_rot_times + dt
+            slerped_gt_rots, slerp_within_time = slerp_rotations(ret["times"], cur_gt_rot_times, gt_rots)
+
+            gt_angs_tfit = np.zeros_like(ret["angs"])
+            gt_angs_tfit[slerp_within_time] = rots_to_xyz(slerped_gt_rots)
+            
+            valid = angs_valid * ~np.isnan(gt_angs_tfit).any(axis=1)
+            eangs = np.abs(ret["angs"][valid, ax] - gt_angs_tfit[valid, ax])
+            avg_eang = np.mean(eangs)
+            print("dt: {}s, err: {}rad".format(dt, avg_eang))
+
+            # NEGATIVE DT
+            gt_rot_times_n = cur_gt_rot_times - dt_step/2
+            slerped_gt_rots, slerp_within_time = slerp_rotations(ret["times"], gt_rot_times_n, gt_rots)
+
+            gt_angs_tfit = np.zeros_like(ret["angs"])
+            gt_angs_tfit[slerp_within_time] = rots_to_xyz(slerped_gt_rots)
+            
+            valid = angs_valid * ~np.isnan(gt_angs_tfit).any(axis=1)
+            eangs = np.abs(ret["angs"][valid, ax] - gt_angs_tfit[valid, ax])
+            avg_eang_n = np.mean(eangs)
+
+            # POSITIVE DT
+            gt_rot_times_p = cur_gt_rot_times + dt_step/2
+            slerped_gt_rots, slerp_within_time = slerp_rotations(ret["times"], gt_rot_times_p, gt_rots)
+
+            gt_angs_tfit = np.zeros_like(ret["angs"])
+            gt_angs_tfit[slerp_within_time] = rots_to_xyz(slerped_gt_rots)
+            
+            valid = angs_valid * ~np.isnan(gt_angs_tfit).any(axis=1)
+            eangs = np.abs(ret["angs"][valid, ax] - gt_angs_tfit[valid, ax])
+            avg_eang_p = np.mean(eangs)
+
+            diff = (avg_eang_p - avg_eang_n) / dt_step
+            dt += - c_step * diff
+
+            print("diff: {}rad/s, new dt: {}s".format(diff, dt))
 
     ## | ----------- Interpolate the missing g.t. values ---------- |
-    gt_rots_greater = ret["times"] > gt_rot_times[0]
-    gt_rots_smaller = ret["times"] < gt_rot_times[-1]
-    slerp_within_time = gt_rots_greater * gt_rots_smaller
-    slerp_times = ret["times"][slerp_within_time]
-    slerp = Slerp(gt_rot_times, Rotation.concatenate(gt_rots))
-    slerped_gt_rots = slerp(slerp_times)
-    slerped_gt_quats = np.array([R.as_quat() for R in slerp(slerp_times)])
-    gt_quats = np.nan * np.ones((n_msgs, 4))
-    gt_quats[slerp_within_time] = slerped_gt_quats
-    
-    for it2 in range(n_msgs):
-        ret["gt_angs"][it2, :] = quat2xyzrot(gt_quats[it2])
+    slerped_gt_rots, slerp_within_time = slerp_rotations(ret["times"], gt_rot_times+dt, gt_rots)
+    ret["gt_angs"][slerp_within_time] = rots_to_xyz(slerped_gt_rots)
 
+    if params["optimize_time"]:
+        eangs = np.abs(ret["angs"][:, ax] - ret["gt_angs"][:, ax])
+        avg_eang = np.mean(eangs)
+        print("dt: {}s, err: {}rad".format(dt, avg_eang))
+        
     avels_invalid = np.isnan(ret["gt_avels"]).any(axis=1)
     avels_valid = ~avels_invalid
-    for it2 in range(3):
+    for it in range(3):
         x = ret["times"]
         xp = ret["times"][avels_valid]
-        fp = ret["gt_avels"][avels_valid, it2]
-        ret["gt_avels"][:, it2] = np.interp(x, xp, fp)
-
-    # cut off invalid samples
-    for key, val in ret.items():
-        ret[key] = ret[key][:it]
+        fp = ret["gt_avels"][avels_valid, it]
+        ret["gt_avels"][:, it] = np.interp(x, xp, fp)
 
     return ret
 
@@ -318,19 +336,21 @@ def load_and_process_rosbags(bags, params):
 if __name__ == "__main__":
     params = dict()
     params["experiments"] = "sim"
-    params["ang_topic"] = "mavros/imu/data"
-    params["avel_topic"] = "mavros/imu/data"
-    # params["ang_topic"] = "estimation_manager/rtk/odom"
-    # params["avel_topic"] = "estimation_manager/rtk/odom"
+    # params["ang_topic"] = "mavros/imu/data"
+    # params["avel_topic"] = "mavros/imu/data"
+    params["ang_topic"] = "estimation_manager/rtk/odom"
+    params["avel_topic"] = "estimation_manager/rtk/odom"
     params["gt_ang_topic"] = "ground_truth"
     params["gt_avel_topic"] = "ground_truth"
+    params["optimize_time"] = False
+    params["optimize_time_axis"] = 1
     do_plot = True
 
     bags = None
     if params["experiments"] == "sim":
         ofile_name = "simulation_noisy"
         bags = (
-            {"fpath": "/home/matous/bag_files_local/eagle/sphere_test/filtered.bag", "obs_uav": "uav1", "skip_t": 0},
+            {"fpath": "/home/matous/bag_files/eagle/sphere_test/filtered.bag", "obs_uav": "uav1", "skip_t": 0},
         )
 
     data = load_and_process_rosbags(bags, params)
