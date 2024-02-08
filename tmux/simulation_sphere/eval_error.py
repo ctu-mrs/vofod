@@ -151,7 +151,8 @@ def load_rosbag(bag, obs_uav, params):
         if hasattr(msg, "header"):
             ret["times"][it] = msg.header.stamp.to_sec()
         else:
-            ret["times"][it] = t.to_sec()
+            print("Message has no header and thus no timestamp!")
+            exit(1)
 
         ## | -------------------- parse the message ------------------- |
         if topic == ang_topic:
@@ -196,8 +197,8 @@ def load_rosbag(bag, obs_uav, params):
 
     dt = 0
 
-    if params["optimize_time"]:
-        ax = params["optimize_time_axis"]
+    if params["preprocessing"] == "optimize_time":
+        ax = params["ang_axis"]
         c_step = 0.01
         dt_step = 1e-2
         angs_valid = ~np.isnan(ret["angs"]).any(axis=1)
@@ -244,7 +245,7 @@ def load_rosbag(bag, obs_uav, params):
     slerped_gt_rots, slerp_within_time = slerp_rotations(ret["times"], gt_rot_times+dt, gt_rots)
     ret["gt_angs"][slerp_within_time] = rots_to_xyz(slerped_gt_rots)
 
-    if params["optimize_time"]:
+    if params["preprocessing"] == "optimize_time":
         eangs = np.abs(ret["angs"][:, ax] - ret["gt_angs"][:, ax])
         avg_eang = np.mean(eangs)
         print("dt: {}s, err: {}rad".format(dt, avg_eang))
@@ -267,7 +268,7 @@ def load_rosbag(bag, obs_uav, params):
 def load_and_process_rosbag(bag_fpath: str, obs_uav: str, start_t: float, params):
 
     bag_fname = os.path.basename(bag_fpath)
-    pkl_fname = "cache/{}_{}.pkl".format(bag_fname, params["ang_topic"])
+    pkl_fname = "cache/{}_{}_{}.pkl".format(bag_fname, params["cache_prefix"], params["preprocessing"])
 
     if os.path.isfile(pkl_fname):
         print("Using pickle file '{}'...".format(pkl_fname))
@@ -283,6 +284,9 @@ def load_and_process_rosbag(bag_fpath: str, obs_uav: str, start_t: float, params
             os.makedirs(os.path.dirname(pkl_fname), exist_ok=True)
             with open(pkl_fname, mode="wb") as fhandle:
                 pickle.dump(loaded, fhandle)
+
+    if params["preprocessing"] == "predict_angle":
+        loaded["angs"] += params["predict_angle_dt"]*loaded["avels"]
 
     loaded["times"] = loaded["times"] - loaded["times"][0]
     invalid0 = np.isnan(loaded["times"])
@@ -336,14 +340,24 @@ def load_and_process_rosbags(bags, params):
 if __name__ == "__main__":
     params = dict()
     params["experiments"] = "sim"
+    ang_axis = 1 # pitch
+
+    # params["cache_prefix"] = "mavros"
     # params["ang_topic"] = "mavros/imu/data"
     # params["avel_topic"] = "mavros/imu/data"
+    # params["predict_angle_dt"] = 0.01
+
+    params["cache_prefix"] = "estimator"
     params["ang_topic"] = "estimation_manager/rtk/odom"
     params["avel_topic"] = "estimation_manager/rtk/odom"
+    params["predict_angle_dt"] = 0.029
+
     params["gt_ang_topic"] = "ground_truth"
     params["gt_avel_topic"] = "ground_truth"
-    params["optimize_time"] = False
-    params["optimize_time_axis"] = 1
+    params["preprocessing"] = "predict_angle"
+    # params["preprocessing"] = "optimize_time"
+    # params["preprocessing"] = "no"
+    params["ang_axis"] = ang_axis
     do_plot = True
 
     bags = None
@@ -357,9 +371,9 @@ if __name__ == "__main__":
 
     v = data["valid"]
     times = data["times"][v]
-    vels = data["avels"][v, 1]
-    angs = data["angs"][v, 1]
-    gt_angs = data["gt_angs"][v, 1]
+    vels = data["avels"][v, ang_axis]
+    angs = data["angs"][v, ang_axis]
+    gt_angs = data["gt_angs"][v, ang_axis]
     eangs = gt_angs - angs
 
     bins = np.linspace(np.min(vels), np.max(vels), 20)
@@ -376,6 +390,7 @@ if __name__ == "__main__":
         means[it] = np.mean(bin_errs)
         stddevs[it] = np.std(bin_errs)
 
+    plt.title("Estimation error from {} with {} preprocessing".format(params["cache_prefix"], params["preprocessing"]))
     plt.plot(bin_ctrs, means, label="means")
     plt.plot(bin_ctrs, stddevs, label="std. devs")
     plt.xlabel("angular velocity [rad/s]")
