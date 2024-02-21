@@ -28,7 +28,7 @@
 
   <arg name="mask_filename" default="" />
 
-  <arg name="rangefinder_topic" default="garmin/range" />
+  <arg name="rangefinder_topic" default="hw_api/distance_sensor" />
 
   <!-- nodelet-related arguments -->
   <arg name="standalone" default="true" />
