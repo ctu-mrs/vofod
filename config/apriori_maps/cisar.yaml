@@ -1,0 +1,16 @@
+apriori_map:
+  tf:
+    x: -463.0
+    y: -106.5
+    z: 3.0
+    yaw: 0
+
+operation_area:
+  offset: # offset of the box center relative to the global origin
+    x: 0.0 # meters
+    y: -20.0 # meters
+    z: -2.0 # meters - this is the lowest value, not center
+  size:
+    x: 70.0 # meters
+    y: 45.0 # meters
+    z: 25.0 # meters
