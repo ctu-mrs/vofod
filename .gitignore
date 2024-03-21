@@ -1,5 +1,6 @@
 # raw data
 data/
+*.pkl
 
 # local backup files
 *.BAK

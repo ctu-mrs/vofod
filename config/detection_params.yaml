@@ -18,7 +18,7 @@ voxel_map:
   # Voxels are updated using these scores
   scores:
     # Each voxel is initialized to this value at the beginning
-    init: -800.0
+    init: -740.0
     # A voxel with a point in it, which is in a cluster classified as part of background,
     # is updated using this value
     point: 0.0

@@ -1,6 +1,6 @@
 <launch>
 
-  <arg name="simulation" default="$(eval env('RUN_TYPE') == 'simulation')" />
+  <arg name="simulation" default="$(eval optenv('RUN_TYPE', 'uav') == 'simulation')" />
 
   <arg name="uav_name" default="$(optenv UAV_NAME uav)"/>
   <arg name="respawn" default="false" />
