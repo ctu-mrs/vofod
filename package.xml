@@ -17,7 +17,6 @@
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
   <depend>image_geometry</depend>
-  <depend>message_generation</depend>
   <depend>tf2</depend>
   <depend>tf2_eigen</depend>
   <depend>mrs_lib</depend>
@@ -27,8 +26,9 @@
   <depend>pcl_conversions</depend>
   <depend>ouster_ros</depend>
 
-  <depend>tf2_sensor_msgs</depend>
   <depend>tf2_ros</depend>
+  <depend>tf2_sensor_msgs</depend>
+  <depend>eagle_msgs</depend>
   <depend>tf2_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>pcl_msgs</depend>
@@ -41,7 +41,6 @@
 
   <export>
     <nodelet plugin="${prefix}/nodelets.xml" />
-    generate_messages_cpp
   </export>
 
 </package>

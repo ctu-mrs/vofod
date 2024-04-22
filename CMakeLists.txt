@@ -37,7 +37,6 @@ find_package(catkin REQUIRED COMPONENTS
   image_transport
   image_geometry
   message_runtime
-  message_generation
   tf2
   tf2_ros
   tf2_eigen
@@ -45,6 +44,7 @@ find_package(catkin REQUIRED COMPONENTS
   mrs_lib
   pcl_conversions
   pcl_ros
+  eagle_msgs
   pcl_msgs
   std_msgs
   nav_msgs
@@ -63,18 +63,6 @@ find_package(pcl_ros REQUIRED)
 
 # include Eigen3
 find_package(Eigen3 REQUIRED)
-
-add_message_files(DIRECTORY msgs FILES
-  Detection.msg
-  Detections.msg
-  Status.msg
-  ProfilingInfo.msg
-)
-
-generate_messages(DEPENDENCIES
-  std_msgs
-  sensor_msgs
-)
 
 generate_dynamic_reconfigure_options(
   config/dynamic_reconfigure/DetectionParams.cfg

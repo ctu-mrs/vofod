@@ -12,8 +12,6 @@
 
 #include <mrs_msgs/PoseWithCovarianceArrayStamped.h>
 
-#include <vofod/Detection.h>
-#include <vofod/Detections.h>
 #include <mrs_lib/param_loader.h>
 #include <mrs_lib/dynamic_reconfigure_mgr.h>
 #include <mrs_lib/subscribe_handler.h>
@@ -55,9 +53,9 @@
 #include <mrs_lib/scope_timer.h>
 
 #include <mrs_msgs/PoseWithCovarianceArrayStamped.h>
-#include <vofod/Detections.h>
-#include <vofod/Status.h>
-#include <vofod/ProfilingInfo.h>
+#include <eagle_msgs/Detections.h>
+#include <eagle_msgs/DetectionStatus.h>
+#include <eagle_msgs/ProfilingInfo.h>
 
 #include "vofod/voxel_map.h"
 #include "vofod/voxel_grid_weighted.h"
@@ -261,17 +259,17 @@ namespace vofod
       m_pub_sure_air_pc = nh.advertise<sensor_msgs::PointCloud2>("sure_air_pc", 1);
 
       m_pub_classif_max_dist = nh.advertise<mrs_msgs::Sphere>("classification_max_distance", 1);
-      m_pub_detections = nh.advertise<vofod::Detections>("detections", 1);
+      m_pub_detections = nh.advertise<eagle_msgs::Detections>("detections", 1);
       m_pub_detections_pc = nh.advertise<sensor_msgs::PointCloud2>("detections_pc", 1);
       m_pub_detections_dbg = nh.advertise<mrs_msgs::PoseWithCovarianceArrayStamped>("detections_dbg", 1);
       m_pub_detections_mks = nh.advertise<visualization_msgs::MarkerArray>("detections_mks", 1);
-      m_pub_status = nh.advertise<vofod::Status>("status", 1);
+      m_pub_status = nh.advertise<eagle_msgs::DetectionStatus>("status", 1);
 
       m_pub_lidar_fov = nh.advertise<visualization_msgs::Marker>("lidar_fov", 1, true);
       m_pub_lidar_raycast = nh.advertise<visualization_msgs::Marker>("lidar_raycast", 1);
       m_pub_lidar_mask = nh.advertise<sensor_msgs::Image>("lidar_mask", 1, true);
 
-      m_pub_profiling_info = nh.advertise<vofod::ProfilingInfo>("profiling_info", 1, true);
+      m_pub_profiling_info = nh.advertise<eagle_msgs::ProfilingInfo>("profiling_info", 1, true);
 
       m_reset_server = nh.advertiseService("reset", &VoFOD::reset_callback, this);
       //}
@@ -964,12 +962,12 @@ namespace vofod
 
       // publish the main output ASAP - other stuff can wait
       {
-        vofod::Detections msg;
+        eagle_msgs::Detections msg;
         msg.header = header;
         msg.detections.reserve(detections.size());
         for (const auto& det : detections)
         {
-          vofod::Detection tmp;
+          eagle_msgs::Detection tmp;
           tmp.id = det.id;
           tmp.confidence = det.confidence;
           tmp.detection_probability = det.detection_probability;
@@ -1374,7 +1372,7 @@ namespace vofod
 
         // publish the current detection status
         {
-          vofod::Status msg;
+          eagle_msgs::DetectionStatus msg;
           msg.header.stamp = ros::Time::now();
           msg.detection_enabled = true;
           msg.detection_active = m_background_pts_sufficient;
@@ -2174,24 +2172,24 @@ namespace vofod
 
     void publish_profile_start(const profile_routines_t routine_id)
     {
-      publish_profile_event(static_cast<uint32_t>(routine_id), vofod::ProfilingInfo::EVENT_TYPE_START);
+      publish_profile_event(static_cast<uint32_t>(routine_id), eagle_msgs::ProfilingInfo::EVENT_TYPE_START);
     }
 
     void publish_profile_end(const profile_routines_t routine_id)
     {
-      publish_profile_event(static_cast<uint32_t>(routine_id), vofod::ProfilingInfo::EVENT_TYPE_END);
+      publish_profile_event(static_cast<uint32_t>(routine_id), eagle_msgs::ProfilingInfo::EVENT_TYPE_END);
     }
 
     void publish_profile_event(const uint32_t routine_id, const uint8_t type)
     {
-      vofod::ProfilingInfo msg;
+      eagle_msgs::ProfilingInfo msg;
       msg.stamp = ros::Time::fromBoost(ros::WallTime::now().toBoost());
       msg.routine_id = routine_id;
       if (m_profile_last_seq.count(routine_id) == 0)
         m_profile_last_seq.insert({routine_id, 0});
       msg.event_sequence = m_profile_last_seq.at(routine_id);
       msg.event_type = type;
-      if (type == vofod::ProfilingInfo::EVENT_TYPE_END)
+      if (type == eagle_msgs::ProfilingInfo::EVENT_TYPE_END)
         m_profile_last_seq.at(routine_id)++;
       std::scoped_lock lck(m_pub_profiling_info_mtx);
       m_pub_profiling_info.publish(msg);
