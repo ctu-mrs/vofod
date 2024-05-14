@@ -124,6 +124,7 @@ namespace vofod
     aabb_t aabb;
     obb_t obb;
     mat3_t covariance;
+    size_t n_points;
     double confidence = std::numeric_limits<double>::quiet_NaN();
     double detection_probability = std::numeric_limits<double>::quiet_NaN();
   };
@@ -842,6 +843,7 @@ namespace vofod
         const double det_dist = (detector_pos - cluster.obb.center_pt).norm();
         detection_t det;
         det.id = m_last_detection_id++;
+        det.n_points = cluster.pc_indices->indices.size();
         det.aabb = cluster.aabb;
         det.obb = cluster.obb;
         det.covariance = std::sqrt(det_dist)*m_drmgr_ptr->config.output__position_sigma*mat3_t::Identity();
@@ -972,6 +974,7 @@ namespace vofod
           vofod::Detection tmp;
           tmp.id = det.id;
           tmp.confidence = det.confidence;
+          tmp.n_points = det.n_points;
           tmp.detection_probability = det.detection_probability;
           tmp.position.x = det.obb.center_pt.x();
           tmp.position.y = det.obb.center_pt.y();
