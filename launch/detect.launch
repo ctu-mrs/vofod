@@ -56,8 +56,9 @@
       <rosparam file="$(find vofod)/config/visualization.yaml" />
     
       <!-- Subscribers -->
-      <!-- <remap from="~pointcloud" to="os_cloud_nodelet/noisy_points" /> -->
       <remap from="~pointcloud" to="os_cloud_nodelet/points" />
+      <remap from="~extra_pointcloud1" to="livox_135deg/points" />
+      <remap from="~extra_pointcloud2" to="livox_90deg/points" />
       <remap from="~height_rangefinder" to="$(arg rangefinder_topic)" />
 
       <!-- Publishers -->

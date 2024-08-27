@@ -113,14 +113,14 @@ target_link_libraries(VoFOD
 )
 target_include_directories(VoFOD SYSTEM PRIVATE ${pcl_ros_INCLUDE_DIRS})
 
-add_library(MaskCreator src/mask_creator.cpp)
-add_dependencies(MaskCreator
-  ${${PROJECT_NAME}_EXPORTED_TARGETS}
-  ${catkin_EXPORTED_TARGETS}
-)
-target_link_libraries(MaskCreator
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  ${pcl_ros_LIBRARIES}
-)
-target_include_directories(MaskCreator SYSTEM PRIVATE ${pcl_ros_INCLUDE_DIRS})
+# add_library(MaskCreator src/mask_creator.cpp)
+# add_dependencies(MaskCreator
+#   ${${PROJECT_NAME}_EXPORTED_TARGETS}
+#   ${catkin_EXPORTED_TARGETS}
+# )
+# target_link_libraries(MaskCreator
+#   ${catkin_LIBRARIES}
+#   ${OpenCV_LIBRARIES}
+#   ${pcl_ros_LIBRARIES}
+# )
+# target_include_directories(MaskCreator SYSTEM PRIVATE ${pcl_ros_INCLUDE_DIRS})

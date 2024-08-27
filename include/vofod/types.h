@@ -4,9 +4,9 @@
 
 namespace vofod
 {
-  using pt_t = ouster_ros::Point;
+  using pt_t = pcl::PointXYZ;
   using pc_t = pcl::PointCloud<pt_t>;
-  
+
   using pt_XYZ_t = pcl::PointXYZ;
   using pc_XYZ_t = pcl::PointCloud<pt_XYZ_t>;
   using pt_XYZR_t = vofod::PointXYZR;

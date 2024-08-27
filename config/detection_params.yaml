@@ -1,7 +1,11 @@
 throttle_period: 1.0 # seconds
 transform_lookup_timeout: 1.0 # seconds
 separate_cluster_removal_period: 0.1 # seconds
-pointcloud_threads: 1
+# number of threads for pointcloud processing
+pointcloud_threads:
+  main: 1   # for processing the main pointcloud ("~/pointcloud" topic)
+  extra: 1  # for processing the extra pointclouds ("~/extra_pointcloud" topic)
+n_extra_pointclouds: 2
 
 ground_points_max_distance: 1.5 # metres
 # at least the number of voxels in the xy plane times this ratio of points have to be considered background

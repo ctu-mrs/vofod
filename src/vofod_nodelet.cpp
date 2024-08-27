@@ -169,8 +169,10 @@ namespace vofod
       pl.loadParam("world_frame_id", m_world_frame_id);
       pl.loadParam("transform_lookup_timeout", m_transform_lookup_timeout);
       pl.loadParam("separate_cluster_removal_period", m_bgclusters_period);
-      pl.loadParam("pointcloud_threads", m_n_pc_threads);
+      pl.loadParam("pointcloud_threads/main", m_n_main_pc_threads);
+      pl.loadParam("pointcloud_threads/extra", m_n_extra_pc_threads);
       pl.loadParam("throttle_period", m_throttle_period);
+      const auto n_extra_pointclouds = pl.loadParam2<int>("n_extra_pointclouds", 0);
 
       const auto static_cloud_filename = pl.loadParam2<std::string>("static_cloud_filename", "");
 
@@ -242,7 +244,9 @@ namespace vofod
       mrs_lib::SubscribeHandlerOptions shopts(nh);
       shopts.no_message_timeout = ros::Duration(5.0);
       // Initialize subscribers
-      mrs_lib::construct_object(m_sh_pc, shopts, "pointcloud");
+      mrs_lib::construct_object(m_sh_main_pc, shopts, "pointcloud");
+      for (int it = 0; it < n_extra_pointclouds; it++)
+        m_sh_extra_pcs.emplace_back(shopts, "extra_pointcloud"+std::to_string(it));
       mrs_lib::construct_object(m_sh_rangefinder, shopts, "height_rangefinder");
       // Initialize publishers
       m_pub_filtered_input_pc = nh.advertise<sensor_msgs::PointCloud2>("filtered_input_pc", 1);
@@ -785,8 +789,9 @@ namespace vofod
       /* } */
 
       auto& mapval = m_voxel_map.atIdx(xc, yc, zc);
+      const float range = pt.getVector3fMap().norm();
       // pt.range is the weight of the point (how many times it should be applied)
-      const float w = 1.0f/static_cast<float>(1lu << std::clamp(pt.range, 0u, 63u));
+      const float w = 1.0f/static_cast<float>(1lu << uint8_t(std::clamp(range, 0.0f, 63.0f)));
       /* if (w < 0.0f || (1.0f-w) < 0.0f) */
       /*   ROS_ERROR("[VoFOD]: Invalid weight: w1 = %.2f, w2 = %.2f!", w, (1.0f-w)); */
       mapval = w*mapval + (1.0f-w)*vmap_score;
@@ -841,7 +846,7 @@ namespace vofod
         const double det_dist = (detector_pos - cluster.obb.center_pt).norm();
         detection_t det;
         det.id = m_last_detection_id++;
-        det.n_points = cluster.pc_indices->indices.size();
+        // det.n_points = cluster.pc_indices->indices.size();
         det.aabb = cluster.aabb;
         det.obb = cluster.obb;
         det.covariance = std::sqrt(det_dist)*m_drmgr_ptr->config.output__position_sigma*mat3_t::Identity();
@@ -877,28 +882,31 @@ namespace vofod
     }
     //}
 
-    void processMsg(const pc_t::ConstPtr cloud, const int thread_n)
+    void processMsg(const pc_t::ConstPtr cloud, const bool raycast_zeros, const bool use_lut, const int thread_n)
     {
       publish_profile_start(profile_routines_t::cnc);
       ros::Time msg_stamp;
       pcl_conversions::fromPCL(cloud->header.stamp, msg_stamp);
       mrs_lib::ScopeTimer stimer("pc proc #" + std::to_string(thread_n), {"msg stamp", msg_stamp}, m_throttle_period);
 
-      if (m_sensor_xyz_lut.directions.cols() != m_sensor_xyz_lut.directions.cols())
+      if (use_lut)
       {
-        NODELET_ERROR("[VoFOD]: Invalid XYZ LUT! Number of direction vectors (%ld) does not equal the number of offsets (%ld)! Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_xyz_lut.offsets.cols());
-        return;
-      }
+        if (m_sensor_xyz_lut.directions.cols() != m_sensor_xyz_lut.directions.cols())
+        {
+          NODELET_ERROR("[VoFOD]: Invalid XYZ LUT! Number of direction vectors (%ld) does not equal the number of offsets (%ld)! Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_xyz_lut.offsets.cols());
+          return;
+        }
 
-      if (cloud->size() != (size_t)m_sensor_xyz_lut.directions.cols())
-      {
-        NODELET_ERROR("[VoFOD]: Unexpected size of pointcloud! Expected: %ld (%d vert. x %d hor.), got: %lu. Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_vrays, m_sensor_hrays, cloud->size());
-        return;
+        if (cloud->size() != (size_t)m_sensor_xyz_lut.directions.cols())
+        {
+          NODELET_ERROR("[VoFOD]: Unexpected size of pointcloud! Expected: %ld (%d vert. x %d hor.), got: %lu. Skipping.", m_sensor_xyz_lut.directions.cols(), m_sensor_vrays, m_sensor_hrays, cloud->size());
+          return;
+        }
       }
 
       NODELET_INFO_STREAM_THROTTLE(1.0, "[VoFOD]: Processing new pointcloud in thead #" << thread_n);
 
-      if (!m_sensor_params_checked || !m_sensor_params_ok)
+      if (use_lut && (!m_sensor_params_checked || !m_sensor_params_ok))
         check_sensor_params(cloud);
 
       std::string cloud_frame_id = cloud->header.frame_id;  // cut off the first forward slash
@@ -950,7 +958,7 @@ namespace vofod
       if (!m_raycast_running)
       {
         m_raycast_running = true;
-        m_raycast_thread = std::thread(&VoFOD::raycast_cloud, this, cloud, s2w_tf);
+        m_raycast_thread = std::thread(&VoFOD::raycast_cloud, this, cloud, s2w_tf, raycast_zeros, use_lut);
         m_raycast_thread.detach();
       }
       stimer.checkpoint("vmap update");
@@ -972,7 +980,7 @@ namespace vofod
           eagle_msgs::Detection tmp;
           tmp.id = det.id;
           tmp.confidence = det.confidence;
-          tmp.n_points = det.n_points;
+          // tmp.n_points = det.n_points;
           tmp.detection_probability = det.detection_probability;
           tmp.position.x = det.obb.center_pt.x();
           tmp.position.y = det.obb.center_pt.y();
@@ -1108,14 +1116,25 @@ namespace vofod
       }
     }
 
-    void pointcloud_loop(const int thread_n)
+    void main_pointcloud_loop(const int thread_n)
     {
       const ros::WallDuration timeout(1.0/10.0);
       while (ros::ok())
       {
-        const auto msg_ptr = m_sh_pc.waitForNew(timeout);
+        const auto msg_ptr = m_sh_main_pc.waitForNew(timeout);
         if (msg_ptr)
-          processMsg(msg_ptr, thread_n);
+          processMsg(msg_ptr, thread_n, true, true);
+      }
+    }
+
+    void extra_pointcloud_loop(mrs_lib::SubscribeHandler<pc_t>& sh, const int thread_n)
+    {
+      const ros::WallDuration timeout(1.0/10.0);
+      while (ros::ok())
+      {
+        const auto msg_ptr = sh.waitForNew(timeout);
+        if (msg_ptr)
+          processMsg(msg_ptr, thread_n, false, false);
       }
     }
 
@@ -1322,8 +1341,11 @@ namespace vofod
       std::thread bgclusters_thread(&VoFOD::bgclusters_loop, this);
       std::thread rangefinder_thread(&VoFOD::rangefinder_loop, this);
       std::vector<std::thread> pointcloud_threads;
-      for (int it = 0; it < m_n_pc_threads; it++)
-        pointcloud_threads.emplace_back(&VoFOD::pointcloud_loop, this, it);
+      for (int it = 0; it < m_n_main_pc_threads; it++)
+        pointcloud_threads.emplace_back(&VoFOD::main_pointcloud_loop, this, it);
+      for (auto& sh : m_sh_extra_pcs)
+        for (int it = 0; it < m_n_extra_pc_threads; it++)
+          pointcloud_threads.emplace_back(&VoFOD::extra_pointcloud_loop, this, std::ref(sh), it);
 
       // keep publishing some debug stuff
       while (ros::ok())
@@ -1333,9 +1355,9 @@ namespace vofod
         /*  //{ */
 
         static bool fov_published = false;
-        if (m_sh_pc.hasMsg() && m_sensor_initialized && !fov_published)
+        if (m_sh_main_pc.hasMsg() && m_sensor_initialized && !fov_published)
         {
-          const auto msg_ptr = m_sh_pc.peekMsg();
+          const auto msg_ptr = m_sh_main_pc.peekMsg();
           std_msgs::Header header;
           header.frame_id = msg_ptr->header.frame_id;
           header.stamp = ros::Time::now();
@@ -1364,10 +1386,10 @@ namespace vofod
         //}
 
         // publish the max. detection range (only once)
-        if (m_sh_pc.hasMsg())
+        if (m_sh_main_pc.hasMsg())
         {
           mrs_msgs::Sphere msg;
-          msg.header.frame_id = m_sh_pc.peekMsg()->header.frame_id;
+          msg.header.frame_id = m_sh_main_pc.peekMsg()->header.frame_id;
           msg.header.stamp = ros::Time::now();
           msg.radius = m_drmgr_ptr->config.classification__max_distance;
           m_pub_classif_max_dist.publish(msg);
@@ -1392,7 +1414,7 @@ namespace vofod
 
   private:
     /* raycast_cloud() method //{ */
-    void raycast_cloud(const pc_t::ConstPtr cloud, const Eigen::Affine3f& tf)
+    void raycast_cloud(const pc_t::ConstPtr cloud, const Eigen::Affine3f& tf, const bool raycast_zeros, const bool use_lut)
     {
       mrs_lib::AtomicScopeFlag run_flag(m_raycast_running); // will be automatically unset when scope ends
       if (m_drmgr_ptr->config.raycast__pause)
@@ -1431,7 +1453,7 @@ namespace vofod
       {
         bool publish = m_pub_lidar_raycast.getNumSubscribers() > 0;
         const float max_dist = (float)m_drmgr_ptr->config.raycast__max_distance;
-        const float min_intensity = (float)m_drmgr_ptr->config.raycast__min_intensity;
+        // const float min_intensity = (float)m_drmgr_ptr->config.raycast__min_intensity;
 
         // go through all points in the cloud and update voxels in the helper voxelmap that the rays
         // from the sensor origin to the point go through according to how long part of the ray
@@ -1441,38 +1463,35 @@ namespace vofod
           for (int col = 0; col < (int)cloud->width; col++)
           {
             const auto pt = cloud->at(col, row);
-            const auto intensity = pt.intensity;
+            const auto pt_vec = pt.getVector3fMap();
+            // const auto intensity = pt.intensity;
             const unsigned idx = row * cloud->width + col;
 
-            if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
+            if (!raycast_zeros && pt.x == 0.0f && pt.y == 0.0f && pt.z == 0.0f)
               continue;
 
-            const vec3_t dir1 = m_sensor_xyz_lut.directions.col(idx);
-            const vec3_t dir = tf_rot*dir1;
+            // if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
+            if (!m_sensor_mask.at(idx) && pt.x == 0.0f && pt.y == 0.0f && pt.z == 0.0f)
+              continue;
 
-            constexpr float range_to_meters = 0.001f;
-            const float ray_dist = range_to_meters*float(pt.range);
+            // constexpr float range_to_meters = 0.001f;
+            // const float ray_dist = range_to_meters*float(pt.range);
+            const float ray_dist = pt_vec.norm();
             const float dist = ray_dist == 0.0f ? max_dist : std::min(ray_dist - m_vmap_voxel_size, max_dist);
 
-            /* some checks (unused) //{ */
-            
-            /* const vec3_t pt_dir = (pt.getVector3fMap() - m_sensor_xyz_lut.offsets.col(idx)).normalized(); */
-            /* const float pt_dist = (pt.getVector3fMap() - m_sensor_xyz_lut.offsets.col(idx)).norm(); */
-            /* if (ray_dist > 0.0f) */
-            /* { */
-            /*   if ((pt_dir - dir1).norm() > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Point dir ([%f, %f, %f]m) and LUT dir ([%f, %f, %f]m) are different (diff: %fm)!", pt_dir.x(), pt_dir.y(), pt_dir.z(), dir1.x(), dir1.y(), dir1.z(), (pt_dir - dir1).norm()); */
-            /*   if (std::abs(pt_dist - dist) > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Point dist (%fm) and range (%fm) are different!", pt_dist, ray_dist); */
-            /*   if (1.0f - dir1.norm() > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Direction from LUT is not normalized (norm is %fm)!", dir1.norm()); */
-            /*   if (1.0f - dir.norm() > 1e-3f) */
-            /*     ROS_ERROR("[VoFOD]: Transformed direction is not normalized (norm is %fm)!", dir.norm()); */
-            /* } */
-            
-            //}
+            vec3_t dir, start_pt;
+            if (use_lut)
+            {
+              const vec3_t dir1 = m_sensor_xyz_lut.directions.col(idx);
+              dir = tf_rot*dir1;
+              start_pt = tf_rot*m_sensor_xyz_lut.offsets.col(idx) + origin_pt;
+            }
+            else
+            {
+              dir = tf_rot*pt_vec/ray_dist;
+              start_pt = origin_pt;
+            }
 
-            const vec3_t start_pt = tf_rot*m_sensor_xyz_lut.offsets.col(idx) + origin_pt;
       
             // TODO: reduce to just one check with max. ray offset
             // check if the ray origin including the ray offset (intrinsic mechanical sensor parameter)
@@ -1507,11 +1526,14 @@ namespace vofod
           for (int idx = 0; idx < (int)cloud->size(); idx++)
           {
             const auto pt = cloud->at(idx);
-            const auto intensity = pt.intensity;
-            if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
+            // const auto intensity = pt.intensity;
+            // if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
+            float range = pt.getVector3fMap().norm();
+            if (!m_sensor_mask.at(idx) && range == 0.0f)
               continue;
-            auto range = 0.001f*pt.range;
-            if (range == 0)
+            // auto range = 0.001f*pt.range;
+            // if (range == 0)
+            if (range == 0.0f)
               range = m_drmgr_ptr->config.raycast__max_distance;
             lengths.at(idx) = range;
           }
@@ -1869,7 +1891,7 @@ namespace vofod
       std::scoped_lock lck(m_sensor_params_mtx);
       bool found_valid = false;
       bool params_ok = true;
-      constexpr float range_to_meters = 0.001f;
+      // constexpr float range_to_meters = 0.001f;
       for (int row = 0; row < (int)cloud->height && !found_valid; row++)
       {
         for (int col = 0; col < (int)cloud->width && !found_valid; col++)
@@ -1877,26 +1899,26 @@ namespace vofod
           const auto pt = cloud->at(col, row);
           const unsigned idx = row * cloud->width + col;
     
-          // ignore invalid points
-          if (!m_sensor_mask.at(idx) || pt.range == 0)
-            continue;
-    
           const vec3_t lut_dir = m_sensor_xyz_lut.directions.col(idx);
-          const float lut_dist = range_to_meters*float(pt.range);
+          // const float lut_dist = range_to_meters*float(pt.range);
     
           const vec3_t pt_dir = (pt.getVector3fMap() - m_sensor_xyz_lut.offsets.col(idx)).normalized();
           const float pt_dist = (pt.getVector3fMap() - m_sensor_xyz_lut.offsets.col(idx)).norm();
+    
+          // ignore invalid points
+          if (!m_sensor_mask.at(idx) || pt_dist == 0)
+            continue;
     
           if ((pt_dir - lut_dir).norm() > 1e-3f)
           {
             ROS_ERROR("[VoFOD]: Point dir #%u [%f, %f, %f]m and LUT dir #%u [%f, %f, %f]m are different (diff: %fm)!", idx, pt_dir.x(), pt_dir.y(), pt_dir.z(), idx, lut_dir.x(), lut_dir.y(), lut_dir.z(), (pt_dir - lut_dir).norm());
             params_ok = false;
           }
-          if (std::abs(pt_dist - lut_dist) > 1e-3f)
-          {
-            ROS_ERROR("[VoFOD]: Point dist #%u %fm and range #%u %fm are different!", idx, pt_dist, idx, lut_dist);
-            params_ok = false;
-          }
+          // if (std::abs(pt_dist - lut_dist) > 1e-3f)
+          // {
+          //   ROS_ERROR("[VoFOD]: Point dist #%u %fm and range #%u %fm are different!", idx, pt_dist, idx, lut_dist);
+          //   params_ok = false;
+          // }
           if (1.0f - lut_dir.norm() > 1e-3f)
           {
             ROS_ERROR("[VoFOD]: Direction from LUT is not normalized (norm is %fm)!", lut_dir.norm());
@@ -2209,7 +2231,8 @@ namespace vofod
     std::unique_ptr<drmgr_t> m_drmgr_ptr;
     tf2_ros::Buffer m_tf_buffer;
     std::unique_ptr<tf2_ros::TransformListener> m_tf_listener_ptr;
-    mrs_lib::SubscribeHandler<pc_t> m_sh_pc;
+    mrs_lib::SubscribeHandler<pc_t> m_sh_main_pc;
+    std::vector<mrs_lib::SubscribeHandler<pc_t>> m_sh_extra_pcs;
     mrs_lib::SubscribeHandler<sensor_msgs::Range> m_sh_rangefinder;
 
     ros::Publisher m_pub_vmap;
@@ -2258,7 +2281,8 @@ namespace vofod
     std::string m_world_frame_id;
     ros::Duration m_transform_lookup_timeout;
     ros::Duration m_bgclusters_period;
-    int m_n_pc_threads;
+    int m_n_main_pc_threads;
+    int m_n_extra_pc_threads;
 
     std::string m_sensor_mask_fname;
     /* int m_sensor_mask_rows; */
