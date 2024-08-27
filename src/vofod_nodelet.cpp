@@ -1123,7 +1123,7 @@ namespace vofod
       {
         const auto msg_ptr = m_sh_main_pc.waitForNew(timeout);
         if (msg_ptr)
-          processMsg(msg_ptr, thread_n, true, true);
+          processMsg(msg_ptr, true, true, thread_n);
       }
     }
 
@@ -1134,7 +1134,7 @@ namespace vofod
       {
         const auto msg_ptr = sh.waitForNew(timeout);
         if (msg_ptr)
-          processMsg(msg_ptr, thread_n, false, false);
+          processMsg(msg_ptr, false, false, thread_n);
       }
     }
 
@@ -1413,6 +1413,57 @@ namespace vofod
     //}
 
   private:
+
+    /* raycast_pt() method //{ */
+    void raycast_pt(const pc_t::ConstPtr cloud, const int idx, const mat3_t& tf_rot, const vec3_t& origin_pt, const float max_dist, const bool raycast_zeros, const bool use_lut)
+    {
+      const auto pt = cloud->at(idx);
+      const bool is_zero_pt = pt.x == 0.0f && pt.y == 0.0f && pt.z == 0.0f;
+      // const auto intensity = pt.intensity;
+    
+      if (!raycast_zeros && is_zero_pt)
+        return;
+    
+      // if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
+      if (!m_sensor_mask.at(idx) && is_zero_pt)
+        return;
+    
+      // constexpr float range_to_meters = 0.001f;
+      // const float pt_dist = range_to_meters*float(pt.range);
+      const auto pt_vec = pt.getVector3fMap();
+      const float pt_dist = pt_vec.norm();
+      const float dist = is_zero_pt ? max_dist : std::clamp(pt_dist - m_vmap_voxel_size, 0.0f, max_dist);
+    
+      vec3_t dir, start_pt;
+      if (use_lut)
+      {
+        const vec3_t dir_sensor = m_sensor_xyz_lut.directions.col(idx);
+        dir = tf_rot*dir_sensor;
+        start_pt = tf_rot*m_sensor_xyz_lut.offsets.col(idx) + origin_pt;
+      }
+      else
+      {
+        const vec3_t dir_sensor = pt_vec/pt_dist;
+        dir = tf_rot*dir_sensor;
+        start_pt = origin_pt;
+      }
+    
+    
+      // TODO: reduce to just one check with max. ray offset
+      // check if the ray origin including the ray offset (intrinsic mechanical sensor parameter)
+      // is still within bounds of the operational area
+      if (m_voxel_raycast.inLimits(start_pt.x(), start_pt.y(), start_pt.z()))
+      {
+        m_voxel_raycast.forEachRay(start_pt, dir, dist,
+            [this](const VoxelMap::coord_t val, const VoxelMap::idx_t x_idx, const VoxelMap::idx_t y_idx, const VoxelMap::idx_t z_idx)
+            {
+              auto& raycastval = m_voxel_raycast.atIdx(x_idx, y_idx, z_idx);
+              raycastval += val;
+            });
+      }
+    }
+    //}
+
     /* raycast_cloud() method //{ */
     void raycast_cloud(const pc_t::ConstPtr cloud, const Eigen::Affine3f& tf, const bool raycast_zeros, const bool use_lut)
     {
@@ -1424,22 +1475,26 @@ namespace vofod
       }
       publish_profile_start(profile_routines_t::raycasting);
 
-      if ((int)cloud->height != m_sensor_vrays || (int)cloud->width != m_sensor_hrays)
+      if (use_lut)
       {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Pointcloud has wrong dimensions, cannot raycast, skipping (has: [%ux%u], expected: [%dx%d]).", cloud->width, cloud->height, m_sensor_hrays, m_sensor_vrays);
-        return;
-      }
+        const bool wrong_dimensions = (int)cloud->height != m_sensor_vrays || (int)cloud->width != m_sensor_hrays;
+        if (wrong_dimensions)
+        {
+          NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Pointcloud has wrong dimensions, cannot raycast, skipping (has: [%ux%u], expected: [%dx%d]).", cloud->width, cloud->height, m_sensor_hrays, m_sensor_vrays);
+          return;
+        }
 
-      if (!m_sensor_params_checked)
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Couldn't check validity of sensor's parameters (no valid points on pointcloud?), skipping.");
-        return;
-      }
+        if (!m_sensor_params_checked)
+        {
+          NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Couldn't check validity of sensor's parameters (no valid points on pointcloud?), skipping.");
+          return;
+        }
 
-      if (!m_sensor_params_ok)
-      {
-        NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Pointcloud doesn't correspond to the expected sensor parameters! Make sure they're set correctly (maybe you're using a different sensor?). Cannot raycast, skipping.");
-        return;
+        if (!m_sensor_params_ok)
+        {
+          NODELET_ERROR_THROTTLE(1.0, "[RaycastCloud]: Pointcloud doesn't correspond to the expected sensor parameters! Make sure they're set correctly (maybe you're using a different sensor?). Cannot raycast, skipping.");
+          return;
+        }
       }
 
       const int start_detection_its = m_detection_its;
@@ -1458,53 +1513,22 @@ namespace vofod
         // go through all points in the cloud and update voxels in the helper voxelmap that the rays
         // from the sensor origin to the point go through according to how long part of the ray
         // intersects the voxel
-        for (int row = 0; row < (int)cloud->height; row++)
+        if (use_lut)
         {
-          for (int col = 0; col < (int)cloud->width; col++)
+          for (int row = 0; row < (int)cloud->height; row++)
           {
-            const auto pt = cloud->at(col, row);
-            const auto pt_vec = pt.getVector3fMap();
-            // const auto intensity = pt.intensity;
-            const unsigned idx = row * cloud->width + col;
-
-            if (!raycast_zeros && pt.x == 0.0f && pt.y == 0.0f && pt.z == 0.0f)
-              continue;
-
-            // if (intensity < min_intensity || (!m_sensor_mask.at(idx) && pt.range == 0))
-            if (!m_sensor_mask.at(idx) && pt.x == 0.0f && pt.y == 0.0f && pt.z == 0.0f)
-              continue;
-
-            // constexpr float range_to_meters = 0.001f;
-            // const float ray_dist = range_to_meters*float(pt.range);
-            const float ray_dist = pt_vec.norm();
-            const float dist = ray_dist == 0.0f ? max_dist : std::min(ray_dist - m_vmap_voxel_size, max_dist);
-
-            vec3_t dir, start_pt;
-            if (use_lut)
+            for (int col = 0; col < (int)cloud->width; col++)
             {
-              const vec3_t dir1 = m_sensor_xyz_lut.directions.col(idx);
-              dir = tf_rot*dir1;
-              start_pt = tf_rot*m_sensor_xyz_lut.offsets.col(idx) + origin_pt;
+              const unsigned idx = row * cloud->width + col;
+              raycast_pt(cloud, idx, tf_rot, origin_pt, max_dist, raycast_zeros, use_lut);
             }
-            else
-            {
-              dir = tf_rot*pt_vec/ray_dist;
-              start_pt = origin_pt;
-            }
-
-      
-            // TODO: reduce to just one check with max. ray offset
-            // check if the ray origin including the ray offset (intrinsic mechanical sensor parameter)
-            // is still within bounds of the operational area
-            if (m_voxel_raycast.inLimits(start_pt.x(), start_pt.y(), start_pt.z()))
-            {
-              m_voxel_raycast.forEachRay(start_pt, dir, dist,
-                  [this](const VoxelMap::coord_t val, const VoxelMap::idx_t x_idx, const VoxelMap::idx_t y_idx, const VoxelMap::idx_t z_idx)
-                  {
-                    auto& raycastval = m_voxel_raycast.atIdx(x_idx, y_idx, z_idx);
-                    raycastval += val;
-                  });
-            }
+          }
+        }
+        else
+        {
+          for (int idx = 0; idx < (int)cloud->size(); idx++)
+          {
+            raycast_pt(cloud, idx, tf_rot, origin_pt, max_dist, raycast_zeros, use_lut);
           }
         }
 
