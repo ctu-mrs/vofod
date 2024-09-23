@@ -14,7 +14,7 @@ windows:
       layout: tiled
       panes:
         - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=grass_plane gui:=true
-        - waitForGazebo; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-ground-truth --enable-ouster --ouster-model OS1-128 --use-gpu-ray --horizontal-samples 1024 --rotation-freq 10"
+        - waitForGazebo; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-ground-truth --enable-ouster model:=OS1-128 use_gpu:=True horizontal_samples:=1024 update_rate:=10"
         - waitForGazebo; rosservice call /mrs_drone_spawner/spawn "2 $UAV_TYPE --enable-rangefinder --enable-ground-truth"
         - waitForControl; gz camera -c gzclient_camera -f $UAV_NAME; history -s gz camera -c gzclient_camera -f $UAV_NAME
   - status:
@@ -54,6 +54,10 @@ windows:
         - waitForControl; rviz -d $VOFOD_PATH/rviz/uav1.rviz
         - waitForControl; roslaunch mrs_rviz_plugins load_robot.launch
         - waitForControl; roslaunch mrs_rviz_plugins rviz_interface.launch
+  - voxblox:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; waitForRos; sleep 1; roslaunch voxblox_ros uav.launch
   - detection:
       layout: tiled
       panes:
