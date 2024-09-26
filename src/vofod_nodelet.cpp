@@ -282,7 +282,6 @@ namespace vofod
       m_tsdf_map = std::make_unique<voxblox::TsdfMap>(tsdf_config);
 
       // initialize the apriori map
-      m_sure_background_sufficient = false;
       m_background_pts_sufficient = false;
       m_apriori_map_initialized = false;
       std::thread apriori_load_thread(&VoFOD::initialize_apriori_map, this, static_cloud_filename, apriori_map_tf, apriori_map_points_weight);
@@ -346,7 +345,6 @@ namespace vofod
           apriori_cloud->push_back(npt);
         }
 
-        m_sure_background_sufficient = true;
         m_background_pts_sufficient = true;
         m_apriori_map_initialized = true;
       }
@@ -1228,7 +1226,7 @@ namespace vofod
 
       bool is_floating = true;
       // if ground is available, check floatingness of the cluster (otherwise it cannot be decided)
-      if (m_background_pts_sufficient && m_sure_background_sufficient)
+      if (m_background_pts_sufficient)
       {
         const int max_explore_vdist = static_cast<int>(std::ceil((ret.obb_size + m_drmgr_ptr->config.classification__max_explore_distance)/m_vmap_voxel_size));
         const float min_ground_dist = static_cast<float>(m_drmgr_ptr->config.classification__min_ground_distance);
@@ -1921,7 +1919,6 @@ namespace vofod
     bool m_sensor_params_ok;
     uint32_t m_last_detection_id;
     std::atomic<bool> m_background_pts_sufficient;
-    std::atomic<bool> m_sure_background_sufficient;
     uint64_t m_background_min_sufficient_pts;
 
     static constexpr float m_vflags_unmarked = 0.0f;
