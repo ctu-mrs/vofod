@@ -65,17 +65,17 @@ The red sphere in Rviz on the right is the detection of the other UAV, and the g
 
 ## Cite as
 
-Matouš Vrba, Viktor Walter, Václav Pritzl, Michal Pliska, Tomáš Báča, Vojtěch Spurný, Daniel Heřt, and Martin Saska, "**On Onboard LiDAR-based Flying Object Detection**," arXiv preprint 2303.05404, 2023.
+Matouš Vrba, Viktor Walter, Václav Pritzl, Michal Pliska, Tomáš Báča, Vojtěch Spurný, Daniel Heřt, and Martin Saska, "On Onboard LiDAR-based Flying Object Detection," IEEE Transactions on Robotics, vol. 41, pp 593-611, 2025.
 
 ```
-@misc{vrba2023fod,
-	title = "On Onboard {LiDAR}-based Flying Object Detection",
-	author = "Matouš Vrba and Viktor Walter and Václav Pritzl and Michal Pliska and Tomáš Báča and Vojtěch Spurný and Daniel Heřt and Martin Saska",
-	note = "preprint, arXiv 2303.05404",
-	year = 2023,
-	eprint = "2303.05404",
-	archiveprefix = "arXiv",
-	primaryclass = "cs.RO",
-	pdf = "https://arxiv.org/pdf/2303.05404"
+@article{vrba2025OnboardLiDARBasedFlying,
+  title = {On Onboard LiDAR-Based Flying Object Detection},
+  author = {Vrba, Matouš and Walter, Viktor and Pritzl, Václav and Pliska, Michal and Báča, Tomáš and Spurný, Vojtěch and Heřt, Daniel and Saska, Martin},
+  year = {2025},
+  journal = {IEEE Transactions on Robotics},
+  volume = {41},
+  pages = {593--611},
+  issn = {1941-0468},
+  doi = {10.1109/TRO.2024.3502494}
 }
 ```
