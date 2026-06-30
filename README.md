@@ -61,7 +61,7 @@ The red sphere in Rviz on the right is the detection of the other UAV, and the g
 
 * Complementary pointcloud-based multi-target tracking and estimation algorithm: [https://github.com/ctu-mrs/lidar_tracker](https://github.com/ctu-mrs/lidar_tracker)
 * MRS UAV System: [https://github.com/ctu-mrs/mrs_uav_system](https://github.com/ctu-mrs/mrs_uav_system)
-* Webpage with related multimedia materials: [https://mrs.felk.cvut.cz/flying-object-detection](https://mrs.felk.cvut.cz/flying-object-detection)
+* Webpage with related multimedia materials: [https://mrs.fel.cvut.cz/flying-object-detection](https://mrs.fel.cvut.cz/flying-object-detection)
 
 ## Cite as
 
